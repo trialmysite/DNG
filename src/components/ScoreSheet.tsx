@@ -1,7 +1,7 @@
 "use client"
 import type React from "react"
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Trash2, Music, Keyboard, RotateCcw, Download, Pen, Eraser } from "lucide-react" // Import Pen and Eraser icons
+import { Trash2, Music, Keyboard, RotateCcw, Download, Pen, Eraser, Settings } from "lucide-react" // Import Settings icon
 import { notations, getNotationByKey, type Notation } from "../data/notations"
 import html2canvas from "html2canvas"
 import jsPDF from "jspdf"
@@ -31,15 +31,12 @@ interface ScoreSheetProps {
   onAddNote: (note: PlacedNotation) => void
   onRemoveNote: (noteId: string) => void
   onClearPage: () => void
+  onUpdatePageSettings: (settings: Partial<ScorePage>) => void
 }
 
 // A4 portrait dimensions in pixels at 96 DPI (approx)
 const A4_WIDTH_PX = 794
 const A4_HEIGHT_PX = 1123
-
-// Estimated dimensions of the image (DNG Book 4 Lines.jpg)
-// const IMAGE_WIDTH = 595
-// const IMAGE_HEIGHT = 842
 
 // Initial X position for keyboard notes
 const INITIAL_KEYBOARD_NOTE_X_POSITION = 170
@@ -75,8 +72,6 @@ const NOTE_BOUNDARY_LEFT = INITIAL_KEYBOARD_NOTE_X_POSITION
 const NOTE_BOUNDARY_RIGHT = 1000 // Original value for right boundary before wrapping
 
 // MIDI Note to Notation Mapping
-// This maps MIDI note numbers to the 'alphabet' key of your notations.
-// You can expand this map to include more MIDI notes and their corresponding notations.
 const midiNoteToNotationMap: { [key: number]: string } = {
   60: "a", // Middle C -> 'a' notation
   62: "s", // D4 -> 's' notation
@@ -89,45 +84,64 @@ const midiNoteToNotationMap: { [key: number]: string } = {
   // Add more mappings as needed
 }
 
+// Options for Key Signatures
+const KEY_SIGNATURE_OPTIONS = [
+  { label: "C Major / A Minor", value: "C" },
+  { label: "G Major / E Minor", value: "G" },
+  { label: "D Major / B Minor", value: "D" },
+  { label: "F Major / D Minor", value: "F" },
+  { label: "B Major / G Minor", value: "B" },
+]
+
+// Options for Time Signatures
+const TIME_SIGNATURE_OPTIONS = [
+  { label: "2/3", numerator: 2, denominator: 3 },
+  { label: "3/4", numerator: 3, denominator: 4 },
+  { label: "3/8", numerator: 3, denominator: 8 },
+  { label: "5/8", numerator: 5, denominator: 8 },
+  { label: "4/4", numerator: 4, denominator: 4 },
+  { label: "3/3", numerator: 3, denominator: 3 },
+]
+
 const ScoreSheet: React.FC<ScoreSheetProps> = ({
   selectedNotation,
   currentPage,
   onAddNote,
   onRemoveNote,
   onClearPage,
+  onUpdatePageSettings,
 }) => {
-  const [showSettings] = useState(false)
+  const [showSettingsDropdown, setShowSettingsDropdown] = useState(false)
+  const [showToolsDropdown, setShowToolsDropdown] = useState(false) // New state for Tools dropdown
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
   const [keyboardEnabled, setKeyboardEnabled] = useState(true)
-  const [midiEnabled, setMidiEnabled] = useState(false) // New state for MIDI
-  const [midiInputs, setMidiInputs] = useState<MIDIInput[]>([]) // Store active MIDI inputs
+  const [midiEnabled, setMidiEnabled] = useState(false)
+  const [midiInputs, setMidiInputs] = useState<MIDIInput[]>([])
   const [nextNotePosition, setNextNotePosition] = useState(INITIAL_KEYBOARD_NOTE_X_POSITION)
-  const [currentKeyboardLineIndex, setCurrentKeyboardLineIndex] = useState(0) // Track current line by index
-  const currentKeyboardLineY = KEYBOARD_LINE_Y_POSITIONS[currentKeyboardLineIndex] // Derived Y position
+  const [currentKeyboardLineIndex, setCurrentKeyboardLineIndex] = useState(0)
+  const currentKeyboardLineY = KEYBOARD_LINE_Y_POSITIONS[currentKeyboardLineIndex]
 
-  // New states for drawing functionality
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [activeTool, setActiveTool] = useState<"none" | "pen" | "eraser">("none") // 'none', 'pen', 'eraser'
-  const isInteracting = useRef(false) // Tracks if mouse is down for drawing/erasing
-  const currentLine = useRef<Array<{ x: number; y: number }>>([]) // Stores points for the current pen stroke
-  const [drawingLines, setDrawingLines] = useState<Array<{ x: number; y: number }[]>>([]) // Stores all completed pen strokes
-  const [eraserSize, setEraserSize] = useState(20) // Default eraser size
+  const [activeTool, setActiveTool] = useState<"none" | "pen" | "eraser">("none")
+  const isInteracting = useRef(false)
+  const currentLine = useRef<Array<{ x: number; y: number }>>([])
+  const [drawingLines, setDrawingLines] = useState<Array<{ x: number; y: number }[]>>([])
+  const [eraserSize] = useState(20) // Default eraser size
 
   const placeNotation = useCallback(
     (mappedNotation: Notation) => {
       let finalX = nextNotePosition
       let finalY = currentKeyboardLineY
 
-      // Check if note exceeds right boundary, then wrap to next line
       if (finalX + NOTATION_VISUAL_WIDTH > NOTE_BOUNDARY_RIGHT) {
         const nextLineIndex = currentKeyboardLineIndex + 1
         if (nextLineIndex < KEYBOARD_LINE_Y_POSITIONS.length) {
-          setCurrentKeyboardLineIndex(nextLineIndex) // Update the state for the next line
-          finalX = NOTE_BOUNDARY_LEFT // Reset X to the left boundary for the new line
-          finalY = KEYBOARD_LINE_Y_POSITIONS[nextLineIndex] // Update Y to the new line's Y
+          setCurrentKeyboardLineIndex(nextLineIndex)
+          finalX = NOTE_BOUNDARY_LEFT
+          finalY = KEYBOARD_LINE_Y_POSITIONS[nextLineIndex]
         } else {
           console.warn("Reached maximum number of lines (11), cannot add more notes by wrapping.")
-          return // Stop adding notes if max lines reached
+          return
         }
       }
 
@@ -141,7 +155,6 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
       }
       onAddNote(newNote)
 
-      // Update nextNotePosition for the *next* note
       setNextNotePosition(finalX + NOTATION_KEYBOARD_X_INCREMENT)
     },
     [nextNotePosition, currentKeyboardLineIndex, currentKeyboardLineY, onAddNote, KEYBOARD_LINE_Y_POSITIONS],
@@ -149,7 +162,8 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
   const handleKeyPress = useCallback(
     (event: KeyboardEvent) => {
-      if (!keyboardEnabled || showSettings || showKeyboardHelp || activeTool !== "none") return // Disable keyboard input if a tool is active
+      if (!keyboardEnabled || showSettingsDropdown || showKeyboardHelp || showToolsDropdown || activeTool !== "none")
+        return
       const target = event.target as HTMLElement
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") {
         return
@@ -164,7 +178,6 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
         if (currentPage.notes.length > 0) {
           const lastNote = currentPage.notes[currentPage.notes.length - 1]
           onRemoveNote(lastNote.id)
-          // Cursor position will be updated by the useEffect below
         }
         return
       }
@@ -179,7 +192,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
             return newIndex
           } else {
             console.warn("Reached maximum number of lines (11). Cannot add more lines with Enter.")
-            return prevIndex // Stay on the last line
+            return prevIndex
           }
         })
         return
@@ -193,9 +206,10 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     },
     [
       keyboardEnabled,
-      showSettings,
+      showSettingsDropdown,
       showKeyboardHelp,
-      activeTool, // Added dependency
+      showToolsDropdown, // Added dependency
+      activeTool,
       currentPage.notes,
       onRemoveNote,
       placeNotation,
@@ -203,10 +217,9 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     ],
   )
 
-  // MIDI message handler
   const handleMidiMessage = useCallback(
     (event: MIDIMessageEvent) => {
-      if (!midiEnabled || showSettings || showKeyboardHelp || activeTool !== "none") return // Disable MIDI input if a tool is active
+      if (!midiEnabled || showSettingsDropdown || showKeyboardHelp || showToolsDropdown || activeTool !== "none") return
 
       if (!event.data) {
         console.warn("MIDI message data is null.")
@@ -217,9 +230,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
       const note = event.data[1]
       const velocity = event.data[2]
 
-      const NOTE_ON = 0x90 // Note On status byte (0x90-0x9F, channel 0-15)
-
-      // Check for Note On event with non-zero velocity (some devices send Note On with velocity 0 instead of Note Off)
+      const NOTE_ON = 0x90
       if ((status & 0xf0) === NOTE_ON && velocity > 0) {
         const mappedAlphabet = midiNoteToNotationMap[note]
         if (mappedAlphabet) {
@@ -230,10 +241,9 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
         }
       }
     },
-    [midiEnabled, showSettings, showKeyboardHelp, activeTool, placeNotation], // Added activeTool dependency
+    [midiEnabled, showSettingsDropdown, showKeyboardHelp, showToolsDropdown, activeTool, placeNotation],
   )
 
-  // Add keyboard event listener
   useEffect(() => {
     if (keyboardEnabled) {
       const handleKeyDown = (e: KeyboardEvent) => handleKeyPress(e)
@@ -246,7 +256,6 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     }
   }, [handleKeyPress, keyboardEnabled])
 
-  // Effect to update cursor position when notes change (add/remove)
   useEffect(() => {
     if (currentPage.notes.length > 0) {
       const lastNote = currentPage.notes[currentPage.notes.length - 1]
@@ -255,16 +264,14 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
       if (lastNoteLineIndex !== -1) {
         setCurrentKeyboardLineIndex(lastNoteLineIndex)
       } else {
-        // Fallback if lastNote.y is not in predefined lines (shouldn't happen with keyboard input)
         setCurrentKeyboardLineIndex(0)
       }
     } else {
       setNextNotePosition(INITIAL_KEYBOARD_NOTE_X_POSITION)
       setCurrentKeyboardLineIndex(0)
     }
-  }, [currentPage.notes, KEYBOARD_LINE_Y_POSITIONS]) // Depend on notes and line positions
+  }, [currentPage.notes, KEYBOARD_LINE_Y_POSITIONS])
 
-  // Focus management for keyboard events
   useEffect(() => {
     if (keyboardEnabled) {
       document.body.focus()
@@ -275,12 +282,11 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     }
   }, [keyboardEnabled])
 
-  // MIDI Access and Event Listener Management
   useEffect(() => {
     if (midiEnabled) {
       if (!navigator.requestMIDIAccess) {
         console.warn("Web MIDI API is not supported in this browser.")
-        setMidiEnabled(false) // Disable MIDI if not supported
+        setMidiEnabled(false)
         return
       }
 
@@ -296,32 +302,28 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
           console.log("MIDI enabled. Listening for messages.")
         } catch (error) {
           console.error("Failed to access MIDI devices:", error)
-          setMidiEnabled(false) // Disable MIDI on error
+          setMidiEnabled(false)
         }
       }
 
       enableMidi()
 
-      // Cleanup function for MIDI
       return () => {
         midiInputs.forEach((input) => {
           input.removeEventListener("midimessage", handleMidiMessage)
         })
         setMidiInputs([])
-        console.log("MIDI disabled. Stopped listening for messages.")
       }
     } else {
-      // If midiEnabled becomes false, ensure all listeners are removed
       midiInputs.forEach((input) => {
         input.removeEventListener("midimessage", handleMidiMessage)
       })
       setMidiInputs([])
     }
-  }, [midiEnabled, handleMidiMessage]) // Depend on midiEnabled and handleMidiMessage
+  }, [midiEnabled, handleMidiMessage])
 
   const handleImageClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool !== "none") {
-      // Only allow click for notation placement if no tool is active
       console.log("A tool is active. Cannot place notations by click.")
       return
     }
@@ -336,16 +338,15 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     const newNote: PlacedNotation = {
       id: Date.now().toString(),
       notation: selectedNotation,
-      x: Math.max(20, Math.min(x, rect.width - 20)), // Clamp X within image
-      y: Math.max(20, Math.min(y, rect.height - 20)), // Clamp Y within image
-      staveIndex: 0, // Not visually distinct staves anymore, default to 0
-      octave: 4, // Default
+      x: Math.max(20, Math.min(x, rect.width - 20)),
+      y: Math.max(20, Math.min(y, rect.height - 20)),
+      staveIndex: 0,
+      octave: 4,
     }
     console.log("Placing selected notation:", newNote)
     onAddNote(newNote)
   }
 
-  // Drawing functions
   const drawLine = useCallback((ctx: CanvasRenderingContext2D, line: { x: number; y: number }[]) => {
     if (line.length < 2) return
     ctx.beginPath()
@@ -356,18 +357,17 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     ctx.stroke()
   }, [])
 
-  // This useEffect redraws all committed lines whenever drawingLines state changes
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height) // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.lineWidth = 2
     ctx.lineCap = "round"
     ctx.strokeStyle = "black"
-    ctx.globalCompositeOperation = "source-over" // Ensure default drawing mode
+    ctx.globalCompositeOperation = "source-over"
 
     drawingLines.forEach((line) => drawLine(ctx, line))
   }, [drawingLines, drawLine])
@@ -391,7 +391,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
         ctx.strokeStyle = "black"
         ctx.globalCompositeOperation = "source-over"
       } else if (activeTool === "eraser") {
-        ctx.globalCompositeOperation = "destination-out" // Makes new shapes "erase" existing ones
+        ctx.globalCompositeOperation = "destination-out"
         ctx.beginPath()
         ctx.arc(x, y, eraserSize / 2, 0, Math.PI * 2)
         ctx.fill()
@@ -427,12 +427,11 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     isInteracting.current = false
     const ctx = canvasRef.current?.getContext("2d")
     if (ctx) {
-      ctx.globalCompositeOperation = "source-over" // Reset to default drawing mode
+      ctx.globalCompositeOperation = "source-over"
     }
 
     if (activeTool === "pen") {
       if (currentLine.current.length > 1) {
-        // Only add if it's a valid line
         setDrawingLines((prev) => [...prev, currentLine.current])
       }
       currentLine.current = []
@@ -440,13 +439,13 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
   }, [activeTool])
 
   const handleClearAll = () => {
-    onClearPage() // Clears notations
-    setDrawingLines([]) // Clears drawings
+    onClearPage()
+    setDrawingLines([])
     const canvas = canvasRef.current
     if (canvas) {
       const ctx = canvas.getContext("2d")
       if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height) // Clear canvas visually
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
       }
     }
   }
@@ -458,7 +457,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     try {
       const canvas = await html2canvas(scoresheetElement, {
         backgroundColor: "#ffffff",
-        scale: 3, // Higher scale for better quality
+        scale: 3,
         useCORS: true,
         width: scoresheetElement.offsetWidth,
         height: scoresheetElement.offsetHeight,
@@ -466,19 +465,16 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
       const imgData = canvas.toDataURL("image/png")
 
-      // Calculate dimensions in millimeters based on 96 DPI
       const pxToMm = 25.4 / 96
       const imgWidthMm = canvas.width * pxToMm
       const imgHeightMm = canvas.height * pxToMm
 
-      // Initialize jsPDF with custom dimensions matching the screenshot
       const pdf = new jsPDF({
-        orientation: imgWidthMm > imgHeightMm ? "landscape" : "portrait", // Determine orientation based on screenshot
+        orientation: imgWidthMm > imgHeightMm ? "landscape" : "portrait",
         unit: "mm",
-        format: [imgWidthMm, imgHeightMm], // Set PDF page size to exact screenshot dimensions
+        format: [imgWidthMm, imgHeightMm],
       })
 
-      // Add the image to the PDF, filling the entire page
       pdf.addImage(imgData, "PNG", 0, 0, imgWidthMm, imgHeightMm)
       pdf.save(`${currentPage.title}.pdf`)
     } catch (error) {
@@ -488,11 +484,12 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
   const handleToolToggle = (tool: "pen" | "eraser") => {
     setActiveTool((prev) => (prev === tool ? "none" : tool))
+    setShowToolsDropdown(false) // Close dropdown after selection
   }
 
   const getCursorStyle = useCallback(() => {
     if (activeTool === "pen") return "crosshair"
-    if (activeTool === "eraser") return 'url("/placeholder.svg?width=24&height=24"), auto' // Custom eraser cursor
+    if (activeTool === "eraser") return 'url("/placeholder.svg?width=24&height=24"), auto'
     if (selectedNotation && activeTool === "none" && !keyboardEnabled && !midiEnabled) return "crosshair"
     return "default"
   }, [activeTool, selectedNotation, keyboardEnabled, midiEnabled])
@@ -502,14 +499,13 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
       className="flex-1 bg-gray-100 overflow-auto"
       onClick={() => {
         if (keyboardEnabled && activeTool === "none") {
-          // Only focus body if keyboard is enabled and no tool is active
           document.body.focus()
         }
       }}
       tabIndex={keyboardEnabled && activeTool === "none" ? 0 : -1}
     >
       <div className="max-w-7xl mx-auto p-8">
-        {/* Compact Header (retained for functionality) */}
+        {/* Compact Header */}
         <div className="bg-white rounded-xl shadow-lg border border-gray-200 mb-6">
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-6">
@@ -529,7 +525,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                   </div>
                   <span>•</span>
                   <div className="flex items-center gap-1">
-                    <Music className="w-3 h-3" /> {/* Using Music icon for MIDI */}
+                    <Music className="w-3 h-3" />
                     <span className={midiEnabled ? "text-green-600 font-medium" : "text-red-600"}>
                       MIDI {midiEnabled ? "ON" : "OFF"}
                     </span>
@@ -538,28 +534,156 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => handleToolToggle("pen")}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
-                  activeTool === "pen"
-                    ? "bg-blue-600 text-white hover:bg-blue-700"
-                    : "bg-gray-600 text-white hover:bg-gray-700"
-                }`}
-              >
-                <Pen className="w-3 h-3" />
-                Pen
-              </button>
-              <button
-                onClick={() => handleToolToggle("eraser")}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
-                  activeTool === "eraser"
-                    ? "bg-red-600 text-white hover:bg-red-700"
-                    : "bg-gray-600 text-white hover:bg-gray-700"
-                }`}
-              >
-                <Eraser className="w-3 h-3" />
-                Eraser
-              </button>
+              {/* Score Settings Dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowSettingsDropdown(!showSettingsDropdown)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-200 bg-gray-600 text-white hover:bg-gray-700"
+                >
+                  <Settings className="w-3 h-3" />
+                  Score Settings
+                </button>
+                {showSettingsDropdown && (
+                  <div className="absolute right-0 mt-2 w-56 p-2 bg-white border border-gray-200 rounded-md shadow-lg z-50">
+                    <div className="px-2 py-1 text-sm font-semibold text-gray-700">Key Signature</div>
+                    <div className="my-1 h-px bg-gray-200" />
+                    <div className="space-y-1">
+                      {KEY_SIGNATURE_OPTIONS.map((option) => (
+                        <label
+                          key={option.value}
+                          className="flex items-center gap-2 px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100 rounded-sm cursor-pointer"
+                        >
+                          <input
+                            type="radio"
+                            name="keySignature"
+                            value={option.value}
+                            checked={currentPage.keySignature === option.value}
+                            onChange={() => onUpdatePageSettings({ keySignature: option.value })}
+                            className="form-radio h-4 w-4 text-purple-600"
+                          />
+                          {option.label}
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="my-2 h-px bg-gray-200" />
+                    <div className="px-2 py-1 text-sm font-semibold text-gray-700">Time Signature</div>
+                    <div className="my-1 h-px bg-gray-200" />
+                    <div className="space-y-1">
+                      {TIME_SIGNATURE_OPTIONS.map((option) => (
+                        <label
+                          key={`${option.numerator}/${option.denominator}`}
+                          className="flex items-center gap-2 px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100 rounded-sm cursor-pointer"
+                        >
+                          <input
+                            type="radio"
+                            name="timeSignature"
+                            value={`${option.numerator}/${option.denominator}`}
+                            checked={
+                              currentPage.timeSignature.numerator === option.numerator &&
+                              currentPage.timeSignature.denominator === option.denominator
+                            }
+                            onChange={() =>
+                              onUpdatePageSettings({
+                                timeSignature: { numerator: option.numerator, denominator: option.denominator },
+                              })
+                            }
+                            className="form-radio h-4 w-4 text-purple-600"
+                          />
+                          {option.label}
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="my-2 h-px bg-gray-200" />
+                    <div className="px-2 py-1 text-sm font-semibold text-gray-700">Tempo ({currentPage.tempo} BPM)</div>
+                    <div className="my-1 h-px bg-gray-200" />
+                    <div className="px-2 py-1">
+                      <input
+                        type="range"
+                        min={40}
+                        max={240}
+                        step={1}
+                        value={currentPage.tempo}
+                        onChange={(e) => onUpdatePageSettings({ tempo: Number(e.target.value) })}
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Tools Dropdown - New consolidated dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowToolsDropdown(!showToolsDropdown)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-200 bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <Settings className="w-3 h-3" />
+                  Tools
+                </button>
+                {showToolsDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 p-2 bg-white border border-gray-200 rounded-md shadow-lg z-50">
+                    <div className="px-2 py-1 text-sm font-semibold text-gray-700">Actions</div>
+                    <div className="my-1 h-px bg-gray-200" />
+                    <button
+                      onClick={() => {
+                        setShowKeyboardHelp(true)
+                        setShowToolsDropdown(false)
+                      }}
+                      className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100 rounded-sm"
+                    >
+                      <Keyboard className="w-3 h-3" />
+                      Key Map
+                    </button>
+                    <button
+                      onClick={() => {
+                        exportToPDF()
+                        setShowToolsDropdown(false)
+                      }}
+                      className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100 rounded-sm"
+                    >
+                      <Download className="w-3 h-3" />
+                      Export PDF
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleClearAll()
+                        setShowToolsDropdown(false)
+                      }}
+                      disabled={currentPage.notes.length === 0 && drawingLines.length === 0}
+                      className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100 rounded-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Clear All
+                    </button>
+
+                    <div className="my-2 h-px bg-gray-200" />
+                    <div className="px-2 py-1 text-sm font-semibold text-gray-700">Drawing Tools</div>
+                    <div className="my-1 h-px bg-gray-200" />
+                    <button
+                      onClick={() => handleToolToggle("pen")}
+                      className={`flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm ${
+                        activeTool === "pen" ? "bg-blue-100 text-blue-700" : "text-gray-700 hover:bg-gray-100"
+                      }`}
+                    >
+                      <Pen className="w-3 h-3" />
+                      Pen {activeTool === "pen" && "(Active)"}
+                    </button>
+                    <button
+                      onClick={() => handleToolToggle("eraser")}
+                      className={`flex items-center gap-2 w-full text-left px-2 py-1.5 text-sm rounded-sm ${
+                        activeTool === "eraser" ? "bg-red-100 text-red-700" : "text-gray-700 hover:bg-gray-100"
+                      }`}
+                    >
+                      <Eraser className="w-3 h-3" />
+                      Eraser {activeTool === "eraser" && "(Active)"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Keyboard and MIDI toggles remain separate */}
               <button
                 onClick={() => setKeyboardEnabled(!keyboardEnabled)}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
@@ -583,67 +707,44 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                 MIDI
               </button>
               <button
-                onClick={() => setShowKeyboardHelp(true)}
+                onClick={() => {
+                  setNextNotePosition(INITIAL_KEYBOARD_NOTE_X_POSITION)
+                  setCurrentKeyboardLineIndex(0)
+                }}
                 className="flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-all duration-200 text-xs font-medium"
               >
-                <Keyboard className="w-3 h-3" />
-                Key Map
-              </button>
-              <button
-                onClick={exportToPDF}
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-all duration-200 text-xs font-medium"
-              >
-                <Download className="w-3 h-3" />
-                Export PDF
-              </button>
-              <button
-                onClick={handleClearAll} // Use the new handleClearAll function
-                disabled={currentPage.notes.length === 0 && drawingLines.length === 0} // Disable if no notes and no drawings
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-600 text-white rounded-md hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all duration-200 text-xs font-medium"
-              >
-                <Trash2 className="w-3 h-3" />
-                Clear All
+                <RotateCcw className="w-3 h-3" />
+                Reset Pos
               </button>
             </div>
           </div>
         </div>
 
         {/* Keyboard Status Banner */}
-        {(keyboardEnabled || midiEnabled) &&
-          activeTool === "none" && ( // Hide if a tool is active
-            <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-2 text-blue-800">
-                  {keyboardEnabled && <Keyboard className="w-4 h-4" />}
-                  {midiEnabled && <Music className="w-4 h-4" />}
-                  <span className="font-medium">
-                    {keyboardEnabled && midiEnabled
-                      ? "Keyboard & MIDI Modes Active"
-                      : keyboardEnabled
-                        ? "Keyboard Mode Active"
-                        : "MIDI Mode Active"}
-                  </span>
-                </div>
-                <button
-                  onClick={() => {
-                    setNextNotePosition(INITIAL_KEYBOARD_NOTE_X_POSITION)
-                    setCurrentKeyboardLineIndex(0) // Reset line index
-                  }}
-                  className="flex items-center gap-1 text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 transition-colors"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  Reset Position
-                </button>
+        {(keyboardEnabled || midiEnabled) && activeTool === "none" && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2 text-blue-800">
+                {keyboardEnabled && <Keyboard className="w-4 h-4" />}
+                {midiEnabled && <Music className="w-4 h-4" />}
+                <span className="font-medium">
+                  {keyboardEnabled && midiEnabled
+                    ? "Keyboard & MIDI Modes Active"
+                    : keyboardEnabled
+                      ? "Keyboard Mode Active"
+                      : "MIDI Mode Active"}
+                </span>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
         {/* Score Sheet Area - Main content area with background image */}
         <div
           className="relative bg-white shadow-xl mx-auto scoresheet-area"
           style={{
-            width: `${RENDERED_SCORESHEET_WIDTH}px`, // Use rendered width
-            height: `${RENDERED_SCORESHEET_HEIGHT}px`, // Use rendered height
+            width: `${RENDERED_SCORESHEET_WIDTH}px`,
+            height: `${RENDERED_SCORESHEET_HEIGHT}px`,
             border: "1px solid #dadada",
           }}
         >
@@ -661,22 +762,36 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
             }}
           />
 
+          {/* Score Sheet Info Display */}
+          <div className="absolute top-10 left-10 z-20 text-gray-800 font-semibold text-lg">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl">{currentPage.timeSignature.numerator}</span>
+              <span className="text-2xl leading-none">{currentPage.timeSignature.denominator}</span>
+            </div>
+            <div className="text-sm mt-1">
+              Key:{" "}
+              {KEY_SIGNATURE_OPTIONS.find((k) => k.value === currentPage.keySignature)?.label ||
+                currentPage.keySignature}
+            </div>
+            <div className="text-sm">Tempo: {currentPage.tempo} BPM</div>
+          </div>
+
           {/* Overlay for click events, note placement, and drawing */}
           <div
             className="absolute inset-0 z-10"
-            onClick={activeTool === "none" ? handleImageClick : undefined} // Only allow click for notation placement if no tool is active
+            onClick={activeTool === "none" ? handleImageClick : undefined}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp} // End drawing if mouse leaves the area
+            onMouseLeave={handleMouseUp}
             style={{
               cursor: getCursorStyle(),
             }}
           >
-            {/* Canvas for drawing */}
+            {/* Canvas for drawing (on top of notes) */}
             <canvas
               ref={canvasRef}
-              className="absolute inset-0 z-30" // Higher z-index than notes for drawing over them
+              className="absolute inset-0 z-30"
               width={RENDERED_SCORESHEET_WIDTH}
               height={RENDERED_SCORESHEET_HEIGHT}
             />
@@ -716,16 +831,15 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
             ))}
 
             {/* Next note position indicator for keyboard input */}
-            {(keyboardEnabled || midiEnabled) &&
-              activeTool === "none" && ( // Hide if a tool is active
-                <div
-                  className="absolute w-px h-6 bg-blue-400 opacity-100 animate-blink z-20 translate-y-1/2" // Changed size and added animate-blink
-                  style={{
-                    left: `${nextNotePosition}px`,
-                    top: `${currentKeyboardLineY}px`, // Use the exact Y position
-                  }}
-                />
-              )}
+            {(keyboardEnabled || midiEnabled) && activeTool === "none" && (
+              <div
+                className="absolute w-px h-6 bg-blue-400 opacity-100 animate-blink z-20 translate-y-1/2"
+                style={{
+                  left: `${nextNotePosition}px`,
+                  top: `${currentKeyboardLineY}px`,
+                }}
+              />
+            )}
 
             {/* Help text for notation placement */}
             {currentPage.notes.length === 0 && activeTool === "none" && (
@@ -779,19 +893,16 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
             )}
 
             {/* Visual indicator for selected notation */}
-            {activeTool === "none" &&
-              !keyboardEnabled &&
-              !midiEnabled &&
-              selectedNotation && ( // Hide if a tool is active
-                <div className="absolute top-4 right-4 bg-purple-100 text-purple-800 text-sm px-3 py-1 rounded-full flex items-center gap-2 shadow-md z-20">
-                  <Music className="w-4 h-4" />
-                  <span>Selected: {selectedNotation.name}</span>
-                </div>
-              )}
+            {activeTool === "none" && !keyboardEnabled && !midiEnabled && selectedNotation && (
+              <div className="absolute top-4 right-4 bg-purple-100 text-purple-800 text-sm px-3 py-1 rounded-full flex items-center gap-2 shadow-md z-20">
+                <Music className="w-4 h-4" />
+                <span>Selected: {selectedNotation.name}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Instructions (retained from original) */}
+        {/* Instructions */}
         <div className="mt-8 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-2xl p-6 shadow-lg">
           <h3 className="font-bold text-blue-900 mb-4 text-lg">How to use DNG Studios:</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -852,19 +963,18 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Press Enter to move to the next line for keyboard input
+                <strong>NEW:</strong> Press Enter to move to the next line
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
                 <strong>NEW:</strong> Notations will automatically wrap to the next line
               </li>
-              
             </ul>
           </div>
         </div>
       </div>
 
-      {/* Keyboard Help Modal (retained from original) */}
+      {/* Keyboard Help Modal */}
       {showKeyboardHelp && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[80vh] overflow-auto border border-gray-200">
