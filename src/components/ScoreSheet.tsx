@@ -1,18 +1,32 @@
 "use client"
 import type React from "react"
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Trash2, Music, Keyboard, RotateCcw, Download, Pen, Eraser, Settings } from "lucide-react" // Import Settings icon
+import {
+  Trash2,
+  Music,
+  Keyboard,
+  RotateCcw,
+  Download,
+  Pen,
+  Eraser,
+  Settings,
+  Type,
+  Bold,
+  Italic,
+  Underline,
+} from "lucide-react"
 import { notations, getNotationByKey, type Notation } from "../data/notations"
 import html2canvas from "html2canvas"
 import jsPDF from "jspdf"
+import type { TextElement, ArticulationElement } from "../App"
 
 interface PlacedNotation {
   id: string
   notation: Notation
-  x: number // X position relative to the left of the scoresheet area
-  y: number // Y position relative to the top of the scoresheet area
-  staveIndex: number // Kept for data consistency, but less visually relevant now
-  octave: number // Kept for data consistency
+  x: number
+  y: number
+  staveIndex: number
+  octave: number
 }
 
 interface ScorePage {
@@ -22,7 +36,10 @@ interface ScorePage {
   timeSignature: { numerator: number; denominator: number }
   keySignature: string
   tempo: number
-  keyboardLineSpacing: number // Vertical spacing for keyboard-placed notes
+  keyboardLineSpacing: number
+  keySignaturePosition?: { x: number; y: number }
+  tempoPosition?: { x: number; y: number }
+  timeSignaturePosition?: { x: number; y: number }
 }
 
 interface ScoreSheetProps {
@@ -32,59 +49,87 @@ interface ScoreSheetProps {
   onRemoveNote: (noteId: string) => void
   onClearPage: () => void
   onUpdatePageSettings: (settings: Partial<ScorePage>) => void
+  textElements: TextElement[]
+  onAddTextElement: (textElement: TextElement) => void
+  onRemoveTextElement: (id: string) => void
+  onUpdateTextElement: (id: string, updates: Partial<TextElement>) => void
+  articulationElements: ArticulationElement[]
+  onAddArticulation: (articulation: ArticulationElement) => void
+  onRemoveArticulation: (id: string) => void
+  // Optional: parent can implement to persist articulation drag moves
+  onUpdateArticulation?: (id: string, updates: Partial<ArticulationElement>) => void
+  selectedArticulation: string | null
+  isTextMode: boolean
 }
 
-// A4 portrait dimensions in pixels at 96 DPI (approx)
 const A4_WIDTH_PX = 794
 const A4_HEIGHT_PX = 1123
-
-// Initial X position for keyboard notes
 const INITIAL_KEYBOARD_NOTE_X_POSITION = 170
-
-// Visual width of a notation image (w-12 is 48px)
 const NOTATION_VISUAL_WIDTH = 48
-
-// Spacing between notations when placed by keyboard
-const NOTATION_KEYBOARD_X_INCREMENT = 50 // This includes notation width + desired gap
-
-// Define the actual rendered dimensions of the scoresheet area
+const NOTATION_KEYBOARD_X_INCREMENT = 50
 const RENDERED_SCORESHEET_WIDTH = A4_WIDTH_PX * 1.3
 const RENDERED_SCORESHEET_HEIGHT = A4_HEIGHT_PX * 1.3
 
-// Define the fixed Y positions for each of the 11 allowed lines
-// You can customize these Y positions to fit your scoresheet design.
-const KEYBOARD_LINE_Y_POSITIONS = [
-  230, // Line 1
-  338, // Line 2
-  446, // Line 3
-  553, // Line 4
-  659, // Line 5
-  764, // Line 6
-  872, // Line 7
-  980, // Line 8
-  1087, // Line 9
-  1193, // Line 10
-  1300, // Line 11
-]
+const KEYBOARD_LINE_Y_POSITIONS = [230, 338, 446, 553, 659, 764, 872, 980, 1087, 1193, 1300]
 
-// Define horizontal boundaries for notes
 const NOTE_BOUNDARY_LEFT = INITIAL_KEYBOARD_NOTE_X_POSITION
-const NOTE_BOUNDARY_RIGHT = 1000 // Original value for right boundary before wrapping
+const NOTE_BOUNDARY_RIGHT = 1000
 
-// MIDI Note to Notation Mapping
+const TIME_SIGNATURE_POS = { x: 10, y: 10 }
+const KEY_POS = { x: 10, y: 50 }
+const TEMPO_POS = { x: 10, y: 70 }
+
+// Updated MIDI mapping: a-z (26 keys) then A-S (19 keys) = 45 total keys
 const midiNoteToNotationMap: { [key: number]: string } = {
-  60: "a", // Middle C -> 'a' notation
-  62: "s", // D4 -> 's' notation
-  64: "d", // E4 -> 'd' notation
-  65: "f", // F4 -> 'f' notation
-  67: "g", // G4 -> 'g' notation
-  69: "h", // A4 -> 'h' notation
-  71: "j", // B4 -> 'j' notation
-  72: "k", // C5 -> 'k' notation
-  // Add more mappings as needed
+  // a-z mapping (C3 to D5)
+  48: "a",
+  49: "b",
+  50: "c",
+  51: "d",
+  52: "e",
+  53: "f",
+  54: "g",
+  55: "h",
+  56: "i",
+  57: "j",
+  58: "k",
+  59: "l",
+  60: "m",
+  61: "n",
+  62: "o",
+  63: "p",
+  64: "q",
+  65: "r",
+  66: "s",
+  67: "t",
+  68: "u",
+  69: "v",
+  70: "w",
+  71: "x",
+  72: "y",
+  73: "z",
+  // A-S mapping (D#5 to A#6)
+  74: "A",
+  75: "B",
+  76: "C",
+  77: "D",
+  78: "E",
+  79: "F",
+  80: "G",
+  81: "H",
+  82: "I",
+  83: "J",
+  84: "K",
+  85: "L",
+  86: "M",
+  87: "N",
+  88: "O",
+  89: "P",
+  90: "Q",
+  91: "R",
+  92: "S",
 }
 
-// Options for Key Signatures
 const KEY_SIGNATURE_OPTIONS = [
   { label: "C Major / A Minor", value: "C" },
   { label: "G Major / E Minor", value: "G" },
@@ -93,7 +138,6 @@ const KEY_SIGNATURE_OPTIONS = [
   { label: "B Major / G Minor", value: "B" },
 ]
 
-// Options for Time Signatures
 const TIME_SIGNATURE_OPTIONS = [
   { label: "2/3", numerator: 2, denominator: 3 },
   { label: "3/4", numerator: 3, denominator: 4 },
@@ -110,15 +154,33 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
   onRemoveNote,
   onClearPage,
   onUpdatePageSettings,
+  textElements,
+  onAddTextElement,
+  onRemoveTextElement,
+  onUpdateTextElement,
+  articulationElements,
+  onAddArticulation,
+  onRemoveArticulation,
+  onUpdateArticulation,
+  selectedArticulation,
+  isTextMode,
 }) => {
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false)
-  const [showToolsDropdown, setShowToolsDropdown] = useState(false) // New state for Tools dropdown
+  const [showToolsDropdown, setShowToolsDropdown] = useState(false)
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
   const [keyboardEnabled, setKeyboardEnabled] = useState(true)
   const [midiEnabled, setMidiEnabled] = useState(false)
   const [midiInputs, setMidiInputs] = useState<MIDIInput[]>([])
   const [nextNotePosition, setNextNotePosition] = useState(INITIAL_KEYBOARD_NOTE_X_POSITION)
   const [currentKeyboardLineIndex, setCurrentKeyboardLineIndex] = useState(0)
+  const [showTextDialog, setShowTextDialog] = useState(false)
+  const [textDialogPosition, setTextDialogPosition] = useState({ x: 0, y: 0 })
+  const [newTextContent, setNewTextContent] = useState("")
+  const [newTextSize, setNewTextSize] = useState(16)
+  const [newTextBold, setNewTextBold] = useState(false)
+  const [newTextItalic, setNewTextItalic] = useState(false)
+  const [newTextUnderline, setNewTextUnderline] = useState(false)
+
   const currentKeyboardLineY = KEYBOARD_LINE_Y_POSITIONS[currentKeyboardLineIndex]
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -126,7 +188,93 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
   const isInteracting = useRef(false)
   const currentLine = useRef<Array<{ x: number; y: number }>>([])
   const [drawingLines, setDrawingLines] = useState<Array<{ x: number; y: number }[]>>([])
-  const [eraserSize] = useState(20) // Default eraser size
+  const [eraserSize] = useState(20)
+
+  // Add drag state for text elements
+  const [draggedTextId, setDraggedTextId] = useState<string | null>(null)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+
+  // Drag state for articulation elements
+  const [draggedArticulationId, setDraggedArticulationId] = useState<string | null>(null)
+  const [articulationDragOffset, setArticulationDragOffset] = useState({ x: 0, y: 0 })
+
+  // Keep ScoreSheet in sync with RightSidebar eraser (and future tools) via custom event
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ tool: "none" | "pen" | "eraser" }>).detail
+      if (!detail) return
+      setActiveTool(detail.tool)
+    }
+    window.addEventListener("dng:tool", handler as EventListener)
+    return () => window.removeEventListener("dng:tool", handler as EventListener)
+  }, [])
+
+  // Add drag handlers for text elements
+  const handleTextMouseDown = useCallback(
+    (e: React.MouseEvent, textId: string) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const textElement = textElements.find((t) => t.id === textId)
+      if (!textElement) return
+
+      setDraggedTextId(textId)
+      setDragOffset({
+        x: e.clientX - textElement.x,
+        y: e.clientY - textElement.y,
+      })
+    },
+    [textElements],
+  )
+
+  const handleTextMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!draggedTextId) return
+      e.preventDefault()
+
+      const newX = e.clientX - dragOffset.x
+      const newY = e.clientY - dragOffset.y
+
+      onUpdateTextElement(draggedTextId, { x: newX, y: newY })
+    },
+    [draggedTextId, dragOffset, onUpdateTextElement],
+  )
+
+  const handleTextMouseUp = useCallback(() => {
+    setDraggedTextId(null)
+    setDragOffset({ x: 0, y: 0 })
+  }, [])
+
+  const handleArticulationMouseDown = useCallback(
+    (e: React.MouseEvent, articulationId: string) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const art = articulationElements.find((a) => a.id === articulationId)
+      if (!art) return
+
+      setDraggedArticulationId(articulationId)
+      setArticulationDragOffset({
+        x: e.clientX - art.x,
+        y: e.clientY - art.y,
+      })
+    },
+    [articulationElements],
+  )
+
+  const handleArticulationMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!draggedArticulationId) return
+      e.preventDefault()
+      const newX = e.clientX - articulationDragOffset.x
+      const newY = e.clientY - articulationDragOffset.y
+      onUpdateArticulation?.(draggedArticulationId, { x: newX, y: newY })
+    },
+    [draggedArticulationId, articulationDragOffset, onUpdateArticulation],
+  )
+
+  const handleArticulationMouseUp = useCallback(() => {
+    setDraggedArticulationId(null)
+    setArticulationDragOffset({ x: 0, y: 0 })
+  }, [])
 
   const placeNotation = useCallback(
     (mappedNotation: Notation) => {
@@ -157,12 +305,19 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
       setNextNotePosition(finalX + NOTATION_KEYBOARD_X_INCREMENT)
     },
-    [nextNotePosition, currentKeyboardLineIndex, currentKeyboardLineY, onAddNote, KEYBOARD_LINE_Y_POSITIONS],
+    [nextNotePosition, currentKeyboardLineIndex, currentKeyboardLineY, onAddNote],
   )
 
   const handleKeyPress = useCallback(
     (event: KeyboardEvent) => {
-      if (!keyboardEnabled || showSettingsDropdown || showKeyboardHelp || showToolsDropdown || activeTool !== "none")
+      if (
+        !keyboardEnabled ||
+        showSettingsDropdown ||
+        showKeyboardHelp ||
+        showToolsDropdown ||
+        activeTool !== "none" ||
+        showTextDialog
+      )
         return
       const target = event.target as HTMLElement
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") {
@@ -208,12 +363,12 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
       keyboardEnabled,
       showSettingsDropdown,
       showKeyboardHelp,
-      showToolsDropdown, // Added dependency
+      showToolsDropdown,
       activeTool,
+      showTextDialog,
       currentPage.notes,
       onRemoveNote,
       placeNotation,
-      KEYBOARD_LINE_Y_POSITIONS,
     ],
   )
 
@@ -244,96 +399,55 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     [midiEnabled, showSettingsDropdown, showKeyboardHelp, showToolsDropdown, activeTool, placeNotation],
   )
 
-  useEffect(() => {
-    if (keyboardEnabled) {
-      const handleKeyDown = (e: KeyboardEvent) => handleKeyPress(e)
-      document.addEventListener("keydown", handleKeyDown, true)
-      window.addEventListener("keydown", handleKeyDown, true)
-      return () => {
-        document.removeEventListener("keydown", handleKeyDown, true)
-        window.removeEventListener("keydown", handleKeyDown, true)
-      }
-    }
-  }, [handleKeyPress, keyboardEnabled])
-
-  useEffect(() => {
-    if (currentPage.notes.length > 0) {
-      const lastNote = currentPage.notes[currentPage.notes.length - 1]
-      setNextNotePosition(lastNote.x + NOTATION_KEYBOARD_X_INCREMENT)
-      const lastNoteLineIndex = KEYBOARD_LINE_Y_POSITIONS.indexOf(lastNote.y)
-      if (lastNoteLineIndex !== -1) {
-        setCurrentKeyboardLineIndex(lastNoteLineIndex)
-      } else {
-        setCurrentKeyboardLineIndex(0)
-      }
-    } else {
-      setNextNotePosition(INITIAL_KEYBOARD_NOTE_X_POSITION)
-      setCurrentKeyboardLineIndex(0)
-    }
-  }, [currentPage.notes, KEYBOARD_LINE_Y_POSITIONS])
-
-  useEffect(() => {
-    if (keyboardEnabled) {
-      document.body.focus()
-      document.body.setAttribute("tabindex", "0")
-      return () => {
-        document.body.removeAttribute("tabindex")
-      }
-    }
-  }, [keyboardEnabled])
-
-  useEffect(() => {
-    if (midiEnabled) {
-      if (!navigator.requestMIDIAccess) {
-        console.warn("Web MIDI API is not supported in this browser.")
-        setMidiEnabled(false)
-        return
-      }
-
-      const enableMidi = async () => {
-        try {
-          const midiAccess = await navigator.requestMIDIAccess()
-          const inputs: MIDIInput[] = []
-          midiAccess.inputs.forEach((input) => {
-            inputs.push(input)
-            input.addEventListener("midimessage", handleMidiMessage)
-          })
-          setMidiInputs(inputs)
-          console.log("MIDI enabled. Listening for messages.")
-        } catch (error) {
-          console.error("Failed to access MIDI devices:", error)
-          setMidiEnabled(false)
-        }
-      }
-
-      enableMidi()
-
-      return () => {
-        midiInputs.forEach((input) => {
-          input.removeEventListener("midimessage", handleMidiMessage)
-        })
-        setMidiInputs([])
-      }
-    } else {
-      midiInputs.forEach((input) => {
-        input.removeEventListener("midimessage", handleMidiMessage)
-      })
-      setMidiInputs([])
-    }
-  }, [midiEnabled, handleMidiMessage])
-
   const handleImageClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool !== "none") {
-      console.log("A tool is active. Cannot place notations by click.")
       return
     }
-    if (!selectedNotation) {
-      console.log("No notation selected. Please select one from the palette first.")
-      return
-    }
+
     const rect = event.currentTarget.getBoundingClientRect()
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
+
+    if (isTextMode) {
+      setTextDialogPosition({ x, y })
+      setShowTextDialog(true)
+      return
+    }
+
+    if (selectedArticulation) {
+      const articulations = [
+        { id: "staccato", name: "Staccato", symbol: "." },
+        { id: "accent", name: "Accent", symbol: ">" },
+        { id: "tenuto", name: "Tenuto", symbol: "—" },
+        { id: "marcato", name: "Marcato", symbol: "^" },
+        { id: "fermata", name: "Fermata", symbol: "𝄐" },
+        { id: "trill", name: "Trill", symbol: "tr" },
+        { id: "mordent", name: "Mordent", symbol: "𝄽" },
+        { id: "turn", name: "Turn", symbol: "𝄾" },
+        { id: "slur", name: "Slur", symbol: "⌒" },
+        { id: "tie", name: "Tie", symbol: "⌒" },
+        { id: "black-dot", name: "Black Dot", symbol: "●" },
+        { id: "outline-dot", name: "Outline Dot", symbol: "○" },
+      ]
+
+      const articulation = articulations.find((a) => a.id === selectedArticulation)
+      if (articulation) {
+        const newArticulation: ArticulationElement = {
+          id: Date.now().toString(),
+          type: articulation.id,
+          name: articulation.name,
+          symbol: articulation.symbol,
+          x: Math.max(20, Math.min(x, rect.width - 20)),
+          y: Math.max(20, Math.min(y, rect.height - 20)),
+        }
+        onAddArticulation(newArticulation)
+      }
+      return
+    }
+
+    if (!selectedNotation) {
+      return
+    }
 
     const newNote: PlacedNotation = {
       id: Date.now().toString(),
@@ -343,8 +457,30 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
       staveIndex: 0,
       octave: 4,
     }
-    console.log("Placing selected notation:", newNote)
     onAddNote(newNote)
+  }
+
+  const handleAddText = () => {
+    if (!newTextContent.trim()) return
+
+    const newTextElement: TextElement = {
+      id: Date.now().toString(),
+      text: newTextContent,
+      x: textDialogPosition.x,
+      y: textDialogPosition.y,
+      fontSize: newTextSize,
+      bold: newTextBold,
+      italic: newTextItalic,
+      underline: newTextUnderline,
+    }
+
+    onAddTextElement(newTextElement)
+    setShowTextDialog(false)
+    setNewTextContent("")
+    setNewTextSize(16)
+    setNewTextBold(false)
+    setNewTextItalic(false)
+    setNewTextUnderline(false)
   }
 
   const drawLine = useCallback((ctx: CanvasRenderingContext2D, line: { x: number; y: number }[]) => {
@@ -372,6 +508,22 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     drawingLines.forEach((line) => drawLine(ctx, line))
   }, [drawingLines, drawLine])
 
+  const eraseArticulationsAt = useCallback(
+    (x: number, y: number) => {
+      const threshold = eraserSize
+      const toRemove: string[] = []
+      for (const art of articulationElements) {
+        const dx = x - art.x
+        const dy = y - art.y
+        if (Math.hypot(dx, dy) <= threshold) {
+          toRemove.push(art.id)
+        }
+      }
+      Array.from(new Set(toRemove)).forEach((id) => onRemoveArticulation(id))
+    },
+    [articulationElements, eraserSize, onRemoveArticulation],
+  )
+
   const handleMouseDown = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (activeTool === "none" || !canvasRef.current) return
@@ -395,9 +547,10 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
         ctx.beginPath()
         ctx.arc(x, y, eraserSize / 2, 0, Math.PI * 2)
         ctx.fill()
+        eraseArticulationsAt(x, y)
       }
     },
-    [activeTool, eraserSize],
+    [activeTool, eraserSize, eraseArticulationsAt],
   )
 
   const handleMouseMove = useCallback(
@@ -417,9 +570,10 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
         ctx.beginPath()
         ctx.arc(x, y, eraserSize / 2, 0, Math.PI * 2)
         ctx.fill()
+        eraseArticulationsAt(x, y)
       }
     },
-    [activeTool, eraserSize],
+    [activeTool, eraserSize, eraseArticulationsAt],
   )
 
   const handleMouseUp = useCallback(() => {
@@ -484,15 +638,96 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
   const handleToolToggle = (tool: "pen" | "eraser") => {
     setActiveTool((prev) => (prev === tool ? "none" : tool))
-    setShowToolsDropdown(false) // Close dropdown after selection
+    setShowToolsDropdown(false)
   }
 
   const getCursorStyle = useCallback(() => {
     if (activeTool === "pen") return "crosshair"
     if (activeTool === "eraser") return 'url("/placeholder.svg?width=24&height=24"), auto'
+    if (isTextMode) return "text"
+    if (selectedArticulation) return "crosshair"
     if (selectedNotation && activeTool === "none" && !keyboardEnabled && !midiEnabled) return "crosshair"
     return "default"
-  }, [activeTool, selectedNotation, keyboardEnabled, midiEnabled])
+  }, [activeTool, selectedNotation, keyboardEnabled, midiEnabled, isTextMode, selectedArticulation])
+
+  // Event listeners setup
+  useEffect(() => {
+    if (keyboardEnabled) {
+      const handleKeyDown = (e: KeyboardEvent) => handleKeyPress(e)
+      document.addEventListener("keydown", handleKeyDown, true)
+      window.addEventListener("keydown", handleKeyDown, true)
+      return () => {
+        document.removeEventListener("keydown", handleKeyDown, true)
+        window.removeEventListener("keydown", handleKeyDown, true)
+      }
+    }
+  }, [handleKeyPress, keyboardEnabled])
+
+  useEffect(() => {
+    if (currentPage.notes.length > 0) {
+      const lastNote = currentPage.notes[currentPage.notes.length - 1]
+      setNextNotePosition(lastNote.x + NOTATION_KEYBOARD_X_INCREMENT)
+      const lastNoteLineIndex = KEYBOARD_LINE_Y_POSITIONS.indexOf(lastNote.y)
+      if (lastNoteLineIndex !== -1) {
+        setCurrentKeyboardLineIndex(lastNoteLineIndex)
+      } else {
+        setCurrentKeyboardLineIndex(0)
+      }
+    } else {
+      setNextNotePosition(INITIAL_KEYBOARD_NOTE_X_POSITION)
+      setCurrentKeyboardLineIndex(0)
+    }
+  }, [currentPage.notes])
+
+  useEffect(() => {
+    if (keyboardEnabled) {
+      document.body.focus()
+      document.body.setAttribute("tabindex", "0")
+      return () => {
+        document.body.removeAttribute("tabindex")
+      }
+    }
+  }, [keyboardEnabled])
+
+  useEffect(() => {
+    if (midiEnabled) {
+      if (!navigator.requestMIDIAccess) {
+        console.warn("Web MIDI API is not supported in this browser.")
+        setMidiEnabled(false)
+        return
+      }
+
+      const enableMidi = async () => {
+        try {
+          const midiAccess = await navigator.requestMIDIAccess()
+          const inputs: MIDIInput[] = []
+          midiAccess.inputs.forEach((input) => {
+            inputs.push(input)
+            input.addEventListener("midimessage", handleMidiMessage)
+          })
+          setMidiInputs(inputs)
+          console.log("MIDI enabled. Listening for messages.")
+        } catch (error) {
+          console.error("Failed to access MIDI devices:", error)
+          setMidiEnabled(false)
+        }
+      }
+
+      enableMidi()
+
+      return () => {
+        midiInputs.forEach((input) => {
+          input.removeEventListener("midimessage", handleMidiMessage)
+        })
+        setMidiInputs([])
+      }
+    } else {
+      midiInputs.forEach((input) => {
+        input.removeEventListener("midimessage", handleMidiMessage)
+      })
+      setMidiInputs([])
+    }
+  }, [midiEnabled, handleMidiMessage])
 
   return (
     <div
@@ -613,7 +848,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                 )}
               </div>
 
-              {/* Tools Dropdown - New consolidated dropdown */}
+              {/* Tools Dropdown (optional, still kept) */}
               <div className="relative">
                 <button
                   onClick={() => setShowToolsDropdown(!showToolsDropdown)}
@@ -683,7 +918,6 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                 )}
               </div>
 
-              {/* Keyboard and MIDI toggles remain separate */}
               <button
                 onClick={() => setKeyboardEnabled(!keyboardEnabled)}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
@@ -720,26 +954,34 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
           </div>
         </div>
 
-        {/* Keyboard Status Banner */}
-        {(keyboardEnabled || midiEnabled) && activeTool === "none" && (
-          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2 text-blue-800">
-                {keyboardEnabled && <Keyboard className="w-4 h-4" />}
-                {midiEnabled && <Music className="w-4 h-4" />}
-                <span className="font-medium">
-                  {keyboardEnabled && midiEnabled
-                    ? "Keyboard & MIDI Modes Active"
-                    : keyboardEnabled
-                      ? "Keyboard Mode Active"
-                      : "MIDI Mode Active"}
-                </span>
+        {/* Status Banner */}
+        {((keyboardEnabled || midiEnabled) && activeTool === "none") ||
+          isTextMode ||
+          (selectedArticulation && (
+            <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2 text-blue-800">
+                  {keyboardEnabled && <Keyboard className="w-4 h-4" />}
+                  {midiEnabled && <Music className="w-4 h-4" />}
+                  {isTextMode && <Type className="w-4 h-4" />}
+                  {selectedArticulation && <span className="text-lg">♪</span>}
+                  <span className="font-medium">
+                    {isTextMode
+                      ? "Text Mode Active - Click anywhere to add text"
+                      : selectedArticulation
+                        ? `Articulation Mode Active - ${selectedArticulation}`
+                        : keyboardEnabled && midiEnabled
+                          ? "Keyboard & MIDI Modes Active"
+                          : keyboardEnabled
+                            ? "Keyboard Mode Active"
+                            : "MIDI Mode Active"}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          ))}
 
-        {/* Score Sheet Area - Main content area with background image */}
+        {/* Score Sheet Area */}
         <div
           className="relative bg-white shadow-xl mx-auto scoresheet-area"
           style={{
@@ -750,7 +992,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
         >
           {/* Background Image */}
           <img
-            src="/images/DNGLines.jpg"
+            src="images/DNGLines.jpg"
             alt="Music Scoresheet Background"
             style={{
               position: "absolute",
@@ -762,21 +1004,42 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
             }}
           />
 
-          {/* Score Sheet Info Display */}
-          <div className="absolute top-10 left-10 z-20 text-gray-800 font-semibold text-lg">
+          {/* Score Sheet Info Display with positioning */}
+          <div
+            className="absolute z-20 text-gray-800 font-semibold text-lg"
+            style={{
+              left: `${TIME_SIGNATURE_POS.x}px`,
+              top: `${TIME_SIGNATURE_POS.y}px`,
+            }}
+          >
             <div className="flex items-baseline gap-2">
               <span className="text-2xl">{currentPage.timeSignature.numerator}</span>
               <span className="text-2xl leading-none">{currentPage.timeSignature.denominator}</span>
             </div>
-            <div className="text-sm mt-1">
-              Key:{" "}
-              {KEY_SIGNATURE_OPTIONS.find((k) => k.value === currentPage.keySignature)?.label ||
-                currentPage.keySignature}
-            </div>
-            <div className="text-sm">Tempo: {currentPage.tempo} BPM</div>
           </div>
 
-          {/* Overlay for click events, note placement, and drawing */}
+          <div
+            className="absolute z-20 text-gray-800 font-semibold text-sm"
+            style={{
+              left: `${KEY_POS.x}px`,
+              top: `${KEY_POS.y}px`,
+            }}
+          >
+            Key:{" "}
+            {KEY_SIGNATURE_OPTIONS.find((k) => k.value === currentPage.keySignature)?.label || currentPage.keySignature}
+          </div>
+
+          <div
+            className="absolute z-20 text-gray-800 font-semibold text-sm"
+            style={{
+              left: `${TEMPO_POS.x}px`,
+              top: `${TEMPO_POS.y}px`,
+            }}
+          >
+            Tempo: {currentPage.tempo} BPM
+          </div>
+
+          {/* Overlay for interactions */}
           <div
             className="absolute inset-0 z-10"
             onClick={activeTool === "none" ? handleImageClick : undefined}
@@ -788,12 +1051,13 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               cursor: getCursorStyle(),
             }}
           >
-            {/* Canvas for drawing (on top of notes) */}
+            {/* Canvas for drawing */}
             <canvas
               ref={canvasRef}
               className="absolute inset-0 z-30"
               width={RENDERED_SCORESHEET_WIDTH}
               height={RENDERED_SCORESHEET_HEIGHT}
+              style={{ pointerEvents: "none" }}
             />
 
             {/* Placed notations */}
@@ -808,7 +1072,6 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                 }}
                 onClick={(e) => {
                   e.stopPropagation()
-                  console.log("Playing notation:", placedNote.notation.name)
                 }}
               >
                 <div className="relative">
@@ -830,10 +1093,82 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               </div>
             ))}
 
-            {/* Next note position indicator for keyboard input */}
-            {(keyboardEnabled || midiEnabled) && activeTool === "none" && (
+            {/* Text elements */}
+            {textElements.map((textElement) => (
               <div
-                className="absolute w-px h-6 bg-blue-400 opacity-100 animate-blink z-20 translate-y-1/2"
+                key={textElement.id}
+                className="absolute group z-20 select-none"
+                style={{
+                  left: `${textElement.x}px`,
+                  top: `${textElement.y}px`,
+                  fontSize: `${textElement.fontSize}px`,
+                  fontWeight: textElement.bold ? "bold" : "normal",
+                  fontStyle: textElement.italic ? "italic" : "normal",
+                  textDecoration: textElement.underline ? "underline" : "none",
+                  cursor: draggedTextId === textElement.id ? "grabbing" : "grab",
+                }}
+                onMouseDown={(e) => handleTextMouseDown(e, textElement.id)}
+                onMouseMove={handleTextMouseMove}
+                onMouseUp={handleTextMouseUp}
+              >
+                <div className="relative">
+                  <span className="text-gray-800 pointer-events-none">{textElement.text}</span>
+                  <button
+                    onMouseDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoveTextElement(textElement.id)
+                    }}
+                    title="Delete text"
+                    aria-label="Delete text"
+                    className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full opacity-100 transition-all duration-300 flex items-center justify-center text-xs font-bold shadow-lg hover:bg-red-600"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* Articulation elements */}
+            {articulationElements.map((articulation) => (
+              <div
+                key={articulation.id}
+                className="absolute group z-20 select-none"
+                style={{
+                  left: `${articulation.x}px`,
+                  top: `${articulation.y}px`,
+                  transform: "translateX(-50%)",
+                  cursor: draggedArticulationId === articulation.id ? "grabbing" : "grab",
+                }}
+                onMouseDown={(e) => handleArticulationMouseDown(e, articulation.id)}
+                onMouseMove={handleArticulationMouseMove}
+                onMouseUp={handleArticulationMouseUp}
+                onClick={(e) => {
+                  e.stopPropagation()
+                }}
+              >
+                <div className="relative">
+                  <span className="text-2xl text-gray-800 font-bold drop-shadow-md">{articulation.symbol}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoveArticulation(articulation.id)
+                    }}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center justify-center text-xs font-bold shadow-lg hover:bg-red-600"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* Next note position indicator */}
+            {(keyboardEnabled || midiEnabled) && activeTool === "none" && !isTextMode && !selectedArticulation && (
+              <div
+                className="absolute w-px h-6 bg-blue-400 opacity-100 animate-pulse z-20 translate-y-1/2"
                 style={{
                   left: `${nextNotePosition}px`,
                   top: `${currentKeyboardLineY}px`,
@@ -841,8 +1176,8 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               />
             )}
 
-            {/* Help text for notation placement */}
-            {currentPage.notes.length === 0 && activeTool === "none" && (
+            {/* Help text for different modes */}
+            {currentPage.notes.length === 0 && activeTool === "none" && !isTextMode && !selectedArticulation && (
               <div className="absolute inset-0 flex items-center justify-center z-20">
                 <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
                   <Music className="w-12 h-12 text-purple-500 mx-auto mb-4" />
@@ -855,7 +1190,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                   </p>
                   <p className="text-sm">
                     {keyboardEnabled
-                      ? "Keyboard mode is active - press any letter key (a-z, A-Z) or Enter for new line"
+                      ? "Keyboard mode is active - press any letter key (a-z, A-S) or Enter for new line"
                       : midiEnabled
                         ? "MIDI mode is active - connect a MIDI device and play!"
                         : selectedNotation
@@ -866,7 +1201,30 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               </div>
             )}
 
-            {/* Help text for drawing mode */}
+            {/* Text mode help */}
+            {isTextMode && (
+              <div className="absolute inset-0 flex items-center justify-center z-20">
+                <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
+                  <Type className="w-12 h-12 text-blue-500 mx-auto mb-4" />
+                  <p className="text-xl font-semibold mb-2">Text Mode Active</p>
+                  <p className="text-sm">Click anywhere on the scoresheet to add text with formatting options</p>
+                  <div>• Drag placed text anywhere; click × to delete</div>
+                </div>
+              </div>
+            )}
+
+            {/* Articulation mode help */}
+            {selectedArticulation && (
+              <div className="absolute inset-0 flex items-center justify-center z-20">
+                <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
+                  <span className="text-4xl mx-auto mb-4 block">♪</span>
+                  <p className="text-xl font-semibold mb-2">Articulation Mode Active</p>
+                  <p className="text-sm">Click anywhere to place the selected articulation: {selectedArticulation}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Drawing mode help */}
             {activeTool === "pen" && (
               <div className="absolute inset-0 flex items-center justify-center z-20">
                 <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
@@ -879,24 +1237,17 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               </div>
             )}
 
-            {/* Help text for eraser mode */}
+            {/* Eraser mode help */}
             {activeTool === "eraser" && (
               <div className="absolute inset-0 flex items-center justify-center z-20">
                 <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
                   <Eraser className="w-12 h-12 text-red-500 mx-auto mb-4" />
                   <p className="text-xl font-semibold mb-2">Erase drawings on the sheet</p>
                   <p className="text-sm">
-                    Click and drag to erase parts of your drawings. Click the Eraser button again to exit erasing mode.
+                    Click and drag to erase parts of your drawings. It also deletes articulations on contact. Click the
+                    Eraser button again to exit erasing mode.
                   </p>
                 </div>
-              </div>
-            )}
-
-            {/* Visual indicator for selected notation */}
-            {activeTool === "none" && !keyboardEnabled && !midiEnabled && selectedNotation && (
-              <div className="absolute top-4 right-4 bg-purple-100 text-purple-800 text-sm px-3 py-1 rounded-full flex items-center gap-2 shadow-md z-20">
-                <Music className="w-4 h-4" />
-                <span>Selected: {selectedNotation.name}</span>
               </div>
             )}
           </div>
@@ -904,75 +1255,166 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
         {/* Instructions */}
         <div className="mt-8 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-2xl p-6 shadow-lg">
-          <h3 className="font-bold text-blue-900 mb-4 text-lg">How to use DNG Studios:</h3>
+          <h3 className="font-bold text-blue-900 mb-4 text-lg">Enhanced DNG Studios Features:</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <ul className="text-sm text-blue-800 space-y-2">
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                Select notations from the palette on the left
+                <strong>NEW:</strong> Right sidebar with articulations and text tools
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                Click on the sheet to place notations manually
+                <strong>NEW:</strong> Click articulations to place musical symbols
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Press keyboard keys (a-z, A-Z) to auto-place notations
+                <strong>NEW:</strong> Text tool with formatting (bold, italic, underline, size)
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                Each key maps to a different notation (uppercase vs lowercase)
+                <strong>NEW:</strong> Position controls for key, tempo, and time signature
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Toggle MIDI mode ON to use a connected MIDI keyboard
+                <strong>NEW:</strong> Built-in metronome with high-quality sound
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                MIDI notes are mapped to specific notations (see Key Map for details)
-              </li>
-              <li className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Click the "Pen" button to enable freehand drawing on the sheet.
-              </li>
-              <li className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Click the "Eraser" button to erase drawings on the sheet.
+                <strong>FIXED:</strong> MIDI mapping now supports a-z then A-S (45 keys total)
               </li>
             </ul>
             <ul className="text-sm text-blue-800 space-y-2">
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                Use "Play All" to hear your composition
+                Keyboard input with automatic line wrapping
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                Toggle keyboard mode on/off as needed
+                MIDI device support for real-time notation placement
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                View keyboard mapping with "Key Map" button
+                Drawing tools for freehand annotations
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                Your work is automatically saved
+                Export to PDF functionality
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Press Backspace to delete the most recent notation
+                Drag and drop text elements for repositioning
               </li>
               <li className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Press Enter to move to the next line
-              </li>
-              <li className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <strong>NEW:</strong> Notations will automatically wrap to the next line
+                Real-time tempo adjustment with metronome sync
               </li>
             </ul>
           </div>
         </div>
       </div>
+
+      {/* Text Dialog Modal */}
+      {showTextDialog && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-gray-200">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                  <Type className="w-5 h-5" />
+                  Add Text
+                </h2>
+                <button
+                  onClick={() => setShowTextDialog(false)}
+                  className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Text Content</label>
+                  <textarea
+                    value={newTextContent}
+                    onChange={(e) => setNewTextContent(e.target.value)}
+                    placeholder="Enter your text here..."
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    rows={3}
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Font Size: {newTextSize}px</label>
+                  <input
+                    type="range"
+                    min="12"
+                    max="48"
+                    value={newTextSize}
+                    onChange={(e) => setNewTextSize(Number(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Formatting</label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setNewTextBold(!newTextBold)}
+                      className={`flex items-center gap-1 px-3 py-2 rounded-lg border transition-all duration-200 ${
+                        newTextBold
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-gray-300 hover:border-gray-400"
+                      }`}
+                    >
+                      <Bold className="w-4 h-4" />
+                      Bold
+                    </button>
+                    <button
+                      onClick={() => setNewTextItalic(!newTextItalic)}
+                      className={`flex items-center gap-1 px-3 py-2 rounded-lg border transition-all duration-200 ${
+                        newTextItalic
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-gray-300 hover:border-gray-400"
+                      }`}
+                    >
+                      <Italic className="w-4 h-4" />
+                      Italic
+                    </button>
+                    <button
+                      onClick={() => setNewTextUnderline(!newTextUnderline)}
+                      className={`flex items-center gap-1 px-3 py-2 rounded-lg border transition-all duration-200 ${
+                        newTextUnderline
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-gray-300 hover:border-gray-400"
+                      }`}
+                    >
+                      <Underline className="w-4 h-4" />
+                      Underline
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={handleAddText}
+                    disabled={!newTextContent.trim()}
+                    className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                  >
+                    Add Text
+                  </button>
+                  <button
+                    onClick={() => setShowTextDialog(false)}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 transition-all duration-200 font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Keyboard Help Modal */}
       {showKeyboardHelp && (
@@ -980,7 +1422,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
           <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[80vh] overflow-auto border border-gray-200">
             <div className="p-8">
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">Keyboard Mapping</h2>
+                <h2 className="text-2xl font-bold text-gray-900">Enhanced Keyboard & MIDI Mapping</h2>
                 <button
                   onClick={() => setShowKeyboardHelp(false)}
                   className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
@@ -994,7 +1436,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                     <div className="flex items-center justify-between mb-2">
                       <kbd
                         className={`px-2 py-1 rounded text-sm font-mono ${
-                          notation.alphabet >= "A" && notation.alphabet <= "Z"
+                          notation.alphabet >= "A" && notation.alphabet <= "S"
                             ? "bg-purple-800 text-white"
                             : "bg-gray-800 text-white"
                         }`}
@@ -1019,35 +1461,64 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
                   <li>• Press any mapped key to place the corresponding notation on the sheet</li>
                   <li>
                     • <kbd className="px-1 py-0.5 bg-gray-800 text-white rounded font-mono text-xs">a-z</kbd> keys place
-                    lowercase notations
+                    lowercase notations (26 keys)
                   </li>
                   <li>
-                    • <kbd className="px-1 py-0.5 bg-purple-800 text-white rounded font-mono text-xs">A-Z</kbd> keys
-                    place uppercase notations (different symbols)
+                    • <kbd className="px-1 py-0.5 bg-purple-800 text-white rounded font-mono text-xs">A-S</kbd> keys
+                    place uppercase notations (19 keys)
                   </li>
-                  <li>• Notations are placed automatically from left to right</li>
+                  <li>• Total of 45 different notations available via keyboard/MIDI</li>
+                  <li>• Notations are placed automatically from left to right with line wrapping</li>
                   <li>• Use "Reset Position" to start placing notations from the beginning again</li>
-                  <li>• Toggle keyboard mode off to use manual placement</li>
                   <li>
                     • Press <kbd className="px-1 py-0.5 bg-gray-800 text-white rounded font-mono text-xs">Enter</kbd> to
                     move to the next line
                   </li>
-                  <li>• Notations will automatically wrap to the next line when the current line is full.</li>
+                  <li>
+                    • Press{" "}
+                    <kbd className="px-1 py-0.5 bg-gray-800 text-white rounded font-mono text-xs">Backspace</kbd> to
+                    delete the last placed notation
+                  </li>
                 </ul>
-                <h3 className="font-semibold text-blue-900 mt-4 mb-2">MIDI Mapping:</h3>
-                <ul className="text-sm text-blue-800 space-y-1">
-                  {Object.entries(midiNoteToNotationMap).map(([midiNote, alphabetKey]) => {
-                    const notation = getNotationByKey(alphabetKey)
-                    return (
-                      <li key={midiNote}>
-                        • MIDI Note {midiNote} ({notation?.name || "Unknown"}) maps to keyboard key{" "}
-                        <kbd className="px-1 py-0.5 bg-gray-800 text-white rounded font-mono text-xs">
-                          {alphabetKey}
-                        </kbd>
-                      </li>
-                    )
-                  })}
-                </ul>
+                <h3 className="font-semibold text-blue-900 mt-4 mb-2">Enhanced MIDI Mapping (a-z then A-S):</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm text-blue-800">
+                  <div>
+                    <h4 className="font-medium mb-1">a-z keys (MIDI notes 48-73):</h4>
+                    <ul className="space-y-1">
+                      {Object.entries(midiNoteToNotationMap)
+                        .slice(0, 26)
+                        .map(([midiNote, alphabetKey]) => {
+                          const notation = getNotationByKey(alphabetKey)
+                          return (
+                            <li key={midiNote} className="text-xs">
+                              • MIDI {midiNote} →{" "}
+                              <kbd className="px-1 py-0.5 bg-gray-800 text-white rounded font-mono">{alphabetKey}</kbd>{" "}
+                              ({notation?.name || "Unknown"})
+                            </li>
+                          )
+                        })}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4 className="font-medium mb-1">A-S keys (MIDI notes 74-92):</h4>
+                    <ul className="space-y-1">
+                      {Object.entries(midiNoteToNotationMap)
+                        .slice(26)
+                        .map(([midiNote, alphabetKey]) => {
+                          const notation = getNotationByKey(alphabetKey)
+                          return (
+                            <li key={midiNote} className="text-xs">
+                              • MIDI {midiNote} →{" "}
+                              <kbd className="px-1 py-0.5 bg-purple-800 text-white rounded font-mono">
+                                {alphabetKey}
+                              </kbd>{" "}
+                              ({notation?.name || "Unknown"})
+                            </li>
+                          )
+                        })}
+                    </ul>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

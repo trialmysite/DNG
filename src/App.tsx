@@ -6,19 +6,42 @@ import ProjectHeader from "./components/ProjectHeader"
 import PageTabs from "./components/PageTabs"
 import NotePalette from "./components/NotePalette"
 import ScoreSheet from "./components/ScoreSheet"
+import RightSidebar from "./components/RightSidebar"
 import { useProjectManager } from "./hooks/useProjectManager"
 import { useScoreProject } from "./hooks/useScoreProject"
-import type { Notation } from "./data/notations" // <--- Changed from Note to Notation
+import type { Notation } from "./data/notations"
+
+export interface TextElement {
+  id: string
+  text: string
+  x: number
+  y: number
+  fontSize: number
+  bold: boolean
+  italic: boolean
+  underline: boolean
+}
+
+export interface ArticulationElement {
+  id: string
+  type: string
+  name: string
+  symbol: string
+  x: number
+  y: number
+}
 
 function App() {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null)
-  // Changed selectedNote to selectedNotation and its type to Notation
   const [selectedNotation, setSelectedNotation] = useState<Notation | null>(null)
   const [selectedAccidental, setSelectedAccidental] = useState<string | null>(null)
+  const [selectedArticulation, setSelectedArticulation] = useState<string | null>(null)
+  const [isTextMode, setIsTextMode] = useState(false)
+  const [textElements, setTextElements] = useState<TextElement[]>([])
+  const [articulationElements, setArticulationElements] = useState<ArticulationElement[]>([])
 
   const { projects, createProject, deleteProject, loadProject, saveProject } = useProjectManager()
 
-  // Ensure useScoreProject's project and currentPage types are consistent with PlacedNotation
   const {
     project,
     currentPage,
@@ -27,7 +50,7 @@ function App() {
     addPage,
     deletePage,
     setCurrentPage,
-    addNoteToCurrentPage, // This function should now expect PlacedNotation
+    addNoteToCurrentPage,
     removeNoteFromCurrentPage,
     clearCurrentPage,
     updatePageSettings,
@@ -55,7 +78,7 @@ function App() {
       saveProject(project)
     }
     setCurrentProjectId(null)
-    setCurrentProject(null as any) // Reset current project
+    setCurrentProject(null as any)
   }
 
   const handleDeleteProject = (projectId: string) => {
@@ -65,14 +88,32 @@ function App() {
     }
   }
 
-  // Auto-save project when it changes
+  const handleAddTextElement = (textElement: TextElement) => {
+    setTextElements(prev => [...prev, textElement])
+  }
+
+  const handleRemoveTextElement = (id: string) => {
+    setTextElements(prev => prev.filter(el => el.id !== id))
+  }
+
+  const handleUpdateTextElement = (id: string, updates: Partial<TextElement>) => {
+    setTextElements(prev => prev.map(el => el.id === id ? { ...el, ...updates } : el))
+  }
+
+  const handleAddArticulation = (articulation: ArticulationElement) => {
+    setArticulationElements(prev => [...prev, articulation])
+  }
+
+  const handleRemoveArticulation = (id: string) => {
+    setArticulationElements(prev => prev.filter(el => el.id !== id))
+  }
+
   React.useEffect(() => {
     if (project && currentProjectId) {
       saveProject(project)
     }
   }, [project, currentProjectId, saveProject])
 
-  // Show homepage if no project is selected
   if (!currentProjectId || !project || !currentPage) {
     return (
       <HomePage
@@ -96,18 +137,35 @@ function App() {
       />
       <div className="flex flex-1">
         <NotePalette
-          selectedNotation={selectedNotation} // <--- Changed prop name
-          onNotationSelect={setSelectedNotation} // <--- Changed prop name
+          selectedNotation={selectedNotation}
+          onNotationSelect={setSelectedNotation}
           selectedAccidental={selectedAccidental}
           onAccidentalSelect={setSelectedAccidental}
         />
         <ScoreSheet
-          selectedNotation={selectedNotation} // <--- Changed prop name
+          selectedNotation={selectedNotation}
           selectedAccidental={selectedAccidental}
           currentPage={currentPage}
           onAddNote={addNoteToCurrentPage}
           onRemoveNote={removeNoteFromCurrentPage}
           onClearPage={clearCurrentPage}
+          onUpdatePageSettings={updatePageSettings}
+          textElements={textElements}
+          onAddTextElement={handleAddTextElement}
+          onRemoveTextElement={handleRemoveTextElement}
+          onUpdateTextElement={handleUpdateTextElement}
+          articulationElements={articulationElements}
+          onAddArticulation={handleAddArticulation}
+          onRemoveArticulation={handleRemoveArticulation}
+          selectedArticulation={selectedArticulation}
+          isTextMode={isTextMode}
+        />
+        <RightSidebar
+          selectedArticulation={selectedArticulation}
+          onArticulationSelect={setSelectedArticulation}
+          isTextMode={isTextMode}
+          onTextModeToggle={setIsTextMode}
+          currentPage={currentPage}
           onUpdatePageSettings={updatePageSettings}
         />
       </div>
