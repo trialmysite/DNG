@@ -27,7 +27,7 @@ export const useProjectManager = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(projectList));
   }, []);
 
-  const createProject = useCallback((title: string, composer: string, description?: string): string => {
+  const createProject = useCallback((title: string, composer: string, description?: string, projectType: "DNG" | "DNR" = "DNG"): string => {
     const projectId = `project-${Date.now()}`;
     const initialPage: ScorePage = {
       id: 'page-1',
@@ -62,6 +62,7 @@ export const useProjectManager = () => {
       noteCount: 0,
       createdAt: new Date(),
       updatedAt: new Date(),
+      projectType,
     };
 
     const updatedProjects = [projectSummary, ...projects];

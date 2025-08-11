@@ -57,7 +57,7 @@ function App() {
   } = useScoreProject()
 
   const handleCreateProject = (title: string, composer: string, description?: string) => {
-    const projectId = createProject(title, composer, description)
+    const projectId = createProject(title, composer, description, "DNG")
     const newProject = loadProject(projectId)
     if (newProject) {
       setCurrentProject(newProject)

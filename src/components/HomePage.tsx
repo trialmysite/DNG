@@ -17,8 +17,8 @@ interface ProjectSummary {
 
 interface HomePageProps {
   projects: ProjectSummary[]
-  onCreateProject: (title: string, composer: string, description?: string, projectType?: "DNG" | "DNR") => void // Updated signature
-  onOpenProject: (projectId: string, projectType: "DNG" | "DNR") => void // Updated signature
+  onCreateProject: (title: string, composer: string, description?: string, projectType?: "DNG" | "DNR") => void
+  onOpenProject: (projectId: string, projectType?: "DNG" | "DNR") => void
   onDeleteProject: (projectId: string) => void
 }
 
@@ -337,7 +337,7 @@ const HomePage: React.FC<HomePageProps> = ({ projects, onCreateProject, onOpenPr
                 </div>
 
                 <button
-                  onClick={() => onOpenProject(project.id, project.projectType)} // Pass projectType
+                  onClick={() => onOpenProject(project.id, project.projectType)}
                   className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-800 text-white rounded-lg hover:bg-purple-600 transition-colors duration-200 text-sm"
                 >
                   <Edit className="w-4 h-4" />

@@ -29,4 +29,28 @@ export interface ScorePage {
   }
   keySignature: string
   tempo: number
+  createdAt: Date
+}
+
+export interface ScoreProject {
+  id: string
+  title: string
+  composer: string
+  description?: string
+  pages: ScorePage[]
+  currentPageId: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface ProjectSummary {
+  id: string
+  title: string
+  composer: string
+  description?: string
+  pageCount: number
+  noteCount: number
+  createdAt: Date
+  updatedAt: Date
+  projectType?: "DNG" | "DNR"
 }

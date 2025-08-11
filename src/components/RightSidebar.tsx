@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState } from "react"
-import { Type, Settings, Volume2, VolumeX, Play, Pause, Eraser } from "lucide-react"
+import { Type, Settings, Volume2, VolumeX, Play, Pause, Eraser, Minus } from "lucide-react"
 
 interface RightSidebarProps {
   selectedArticulation: string | null
@@ -26,6 +26,7 @@ const articulations = [
   { id: "tie", name: "Tie", symbol: "⌒" },
   { id: "black-dot", name: "Black Dot", symbol: "●" },
   { id: "outline-dot", name: "Outline Dot", symbol: "○" },
+  { id: "line", name: "Line", symbol: "—" },
 ]
 
 const RightSidebar: React.FC<RightSidebarProps> = ({
@@ -39,7 +40,7 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
   const [metronomeEnabled, setMetronomeEnabled] = useState(false)
   const [metronomeInterval, setMetronomeInterval] = useState<ReturnType<typeof setInterval> | null>(null)
 
-  const [activeTool, setActiveTool] = useState<"none" | "eraser">("none")
+  const [activeTool, setActiveTool] = useState<"none" | "eraser" | "line">("none")
   const toggleEraser = () => {
     const next = activeTool === "eraser" ? "none" : "eraser"
     setActiveTool(next)
@@ -47,6 +48,12 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
     window.dispatchEvent(new CustomEvent("dng:tool", { detail: { tool: next } }))
   }
 
+  const toggleLineTool = () => {
+    const next = activeTool === "line" ? "none" : "line"
+    setActiveTool(next)
+    if (next === "line" && isTextMode) onTextModeToggle(false)
+    window.dispatchEvent(new CustomEvent("dng:tool", { detail: { tool: next } }))
+  }
   const startMetronome = () => {
     if (metronomeInterval) {
       clearInterval(metronomeInterval)
@@ -188,6 +195,22 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
           </button>
           <div className="mt-2 text-xs text-slate-400">
             • Eraser removes freehand drawings and articulations on contact
+          </div>
+          
+          <button
+            onClick={toggleLineTool}
+            className={`mt-2 flex w-full items-center justify-center gap-2 rounded-lg border p-3 transition-all duration-200 ${
+              activeTool === "line"
+                ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                : "border-slate-600 bg-slate-800/50 text-white hover:border-slate-500 hover:bg-slate-700/50"
+            }`}
+          >
+            <Minus className="h-5 w-5" />
+            <div className="text-sm font-medium">{activeTool === "line" ? "Line Tool ON" : "Enable Line Tool"}</div>
+          </button>
+          <div className="mt-2 text-xs text-slate-400">
+            • Click to start line, click again to finish
+            • Drag endpoints to resize after placing
           </div>
         </div>
 

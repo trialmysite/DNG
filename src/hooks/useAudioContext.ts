@@ -1,11 +1,26 @@
 "use client"
 
-import { useCallback } from "react"
+import { useCallback, useRef } from "react"
 
 export const useAudioContext = () => {
+  const audioContextRef = useRef<AudioContext | null>(null)
+
+  const getAudioContext = useCallback(() => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
+    }
+    return audioContextRef.current
+  }, [])
+
   const playNote = useCallback((frequency: number) => {
     try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const audioContext = getAudioContext()
+      
+      // Resume context if suspended (for better browser compatibility)
+      if (audioContext.state === 'suspended') {
+        audioContext.resume()
+      }
+      
       const oscillator = audioContext.createOscillator()
       const gainNode = audioContext.createGain()
 
@@ -13,17 +28,24 @@ export const useAudioContext = () => {
       gainNode.connect(audioContext.destination)
 
       oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime)
-      oscillator.type = "sine"
+      oscillator.type = "triangle" // Better sound quality for musical notes
 
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5)
+      // Improved envelope for more natural sound
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime)
+      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01) // Quick attack
+      gainNode.gain.exponentialRampToValueAtTime(0.1, audioContext.currentTime + 0.1) // Decay
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.8) // Release
 
       oscillator.start(audioContext.currentTime)
-      oscillator.stop(audioContext.currentTime + 0.5)
+      oscillator.stop(audioContext.currentTime + 0.8)
     } catch (error) {
       console.warn("Audio playback not supported:", error)
     }
-  }, [])
+  }, [getAudioContext])
 
-  return { playNote }
+  const playChord = useCallback((frequencies: number[]) => {
+    frequencies.forEach(freq => playNote(freq))
+  }, [playNote])
+
+  return { playNote, playChord }
 }
