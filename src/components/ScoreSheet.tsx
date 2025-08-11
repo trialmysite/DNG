@@ -75,9 +75,10 @@ const KEYBOARD_LINE_Y_POSITIONS = [230, 338, 446, 553, 659, 764, 872, 980, 1087,
 const NOTE_BOUNDARY_LEFT = INITIAL_KEYBOARD_NOTE_X_POSITION
 const NOTE_BOUNDARY_RIGHT = 1000
 
-const TIME_SIGNATURE_POS = { x: 10, y: 10 }
-const KEY_POS = { x: 10, y: 50 }
-const TEMPO_POS = { x: 10, y: 70 }
+// Default positions if not provided by currentPage
+const DEFAULT_TIME_SIGNATURE_POS = { x: 150, y: 130 }
+const DEFAULT_KEY_POS = { x: 150, y: 170 }
+const DEFAULT_TEMPO_POS = { x: 150, y: 200 }
 
 // Updated MIDI mapping: a-z (26 keys) then A-S (19 keys) = 45 total keys
 const midiNoteToNotationMap: { [key: number]: string } = {
@@ -181,6 +182,20 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
   const [newTextItalic, setNewTextItalic] = useState(false)
   const [newTextUnderline, setNewTextUnderline] = useState(false)
 
+  // Moved useState calls inside the component and initialized from currentPage or defaults
+  const [timeSignaturePos, setTimeSignaturePos] = useState(
+    currentPage.timeSignaturePosition || DEFAULT_TIME_SIGNATURE_POS,
+  )
+  const [keyPos, setKeyPos] = useState(currentPage.keySignaturePosition || DEFAULT_KEY_POS)
+  const [tempoPos, setTempoPos] = useState(currentPage.tempoPosition || DEFAULT_TEMPO_POS)
+
+  // Sync internal positions with currentPage props if they change externally
+  useEffect(() => {
+    setTimeSignaturePos(currentPage.timeSignaturePosition || DEFAULT_TIME_SIGNATURE_POS)
+    setKeyPos(currentPage.keySignaturePosition || DEFAULT_KEY_POS)
+    setTempoPos(currentPage.tempoPosition || DEFAULT_TEMPO_POS)
+  }, [currentPage.timeSignaturePosition, currentPage.keySignaturePosition, currentPage.tempoPosition])
+
   const currentKeyboardLineY = KEYBOARD_LINE_Y_POSITIONS[currentKeyboardLineIndex]
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -197,6 +212,10 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
   // Drag state for articulation elements
   const [draggedArticulationId, setDraggedArticulationId] = useState<string | null>(null)
   const [articulationDragOffset, setArticulationDragOffset] = useState({ x: 0, y: 0 })
+
+  // New drag state for score info elements
+  const [draggedScoreInfoId, setDraggedScoreInfoId] = useState<"timeSignature" | "key" | "tempo" | null>(null)
+  const [scoreInfoDragOffset, setScoreInfoDragOffset] = useState({ x: 0, y: 0 })
 
   // Keep ScoreSheet in sync with RightSidebar eraser (and future tools) via custom event
   useEffect(() => {
@@ -275,6 +294,71 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     setDraggedArticulationId(null)
     setArticulationDragOffset({ x: 0, y: 0 })
   }, [])
+
+  // New drag handlers for score info elements
+  const handleScoreInfoMouseDown = useCallback(
+    (e: React.MouseEvent, id: "timeSignature" | "key" | "tempo") => {
+      e.preventDefault()
+      e.stopPropagation()
+      setDraggedScoreInfoId(id)
+
+      let currentX, currentY
+      if (id === "timeSignature") {
+        currentX = timeSignaturePos.x
+        currentY = timeSignaturePos.y
+      } else if (id === "key") {
+        currentX = keyPos.x
+        currentY = keyPos.y
+      } else {
+        // tempo
+        currentX = tempoPos.x
+        currentY = tempoPos.y
+      }
+
+      setScoreInfoDragOffset({
+        x: e.clientX - currentX,
+        y: e.clientY - currentY,
+      })
+    },
+    [timeSignaturePos, keyPos, tempoPos],
+  )
+
+  const handleScoreInfoMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!draggedScoreInfoId) return
+      e.preventDefault()
+
+      const newX = e.clientX - scoreInfoDragOffset.x
+      const newY = e.clientY - scoreInfoDragOffset.y
+
+      if (draggedScoreInfoId === "timeSignature") {
+        setTimeSignaturePos({ x: newX, y: newY })
+      } else if (draggedScoreInfoId === "key") {
+        setKeyPos({ x: newX, y: newY })
+      } else {
+        // tempo
+        setTempoPos({ x: newX, y: newY })
+      }
+    },
+    [draggedScoreInfoId, scoreInfoDragOffset],
+  )
+
+  const handleScoreInfoMouseUp = useCallback(() => {
+    if (!draggedScoreInfoId) return
+
+    // Persist the new positions to currentPage
+    if (draggedScoreInfoId === "timeSignature") {
+      onUpdatePageSettings({ timeSignaturePosition: timeSignaturePos })
+    } else if (draggedScoreInfoId === "key") {
+      onUpdatePageSettings({ keySignaturePosition: keyPos })
+    } else {
+      // tempo
+      onUpdatePageSettings({ tempoPosition: tempoPos })
+    }
+
+    setDraggedScoreInfoId(null)
+    setScoreInfoDragOffset({ x: 0, y: 0 })
+  }, [draggedScoreInfoId, timeSignaturePos, keyPos, tempoPos, onUpdatePageSettings])
 
   const placeNotation = useCallback(
     (mappedNotation: Notation) => {
@@ -647,8 +731,9 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     if (isTextMode) return "text"
     if (selectedArticulation) return "crosshair"
     if (selectedNotation && activeTool === "none" && !keyboardEnabled && !midiEnabled) return "crosshair"
+    if (draggedScoreInfoId) return "grabbing" // Cursor for dragging score info
     return "default"
-  }, [activeTool, selectedNotation, keyboardEnabled, midiEnabled, isTextMode, selectedArticulation])
+  }, [activeTool, selectedNotation, keyboardEnabled, midiEnabled, isTextMode, selectedArticulation, draggedScoreInfoId])
 
   // Event listeners setup
   useEffect(() => {
@@ -1006,35 +1091,38 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
           {/* Score Sheet Info Display with positioning */}
           <div
-            className="absolute z-20 text-gray-800 font-semibold text-lg"
+            className="absolute z-20 text-gray-800 font-semibold text-lg cursor-grab"
             style={{
-              left: `${TIME_SIGNATURE_POS.x}px`,
-              top: `${TIME_SIGNATURE_POS.y}px`,
+              left: `${timeSignaturePos.x}px`,
+              top: `${timeSignaturePos.y}px`,
             }}
+            onMouseDown={(e) => handleScoreInfoMouseDown(e, "timeSignature")}
           >
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl">{currentPage.timeSignature.numerator}</span>
+              <span className="text-2xl">{currentPage.timeSignature.numerator} /</span>
               <span className="text-2xl leading-none">{currentPage.timeSignature.denominator}</span>
             </div>
           </div>
 
           <div
-            className="absolute z-20 text-gray-800 font-semibold text-sm"
+            className="absolute z-20 text-gray-800 font-semibold text-sm cursor-grab"
             style={{
-              left: `${KEY_POS.x}px`,
-              top: `${KEY_POS.y}px`,
+              left: `${keyPos.x}px`,
+              top: `${keyPos.y}px`,
             }}
+            onMouseDown={(e) => handleScoreInfoMouseDown(e, "key")}
           >
             Key:{" "}
             {KEY_SIGNATURE_OPTIONS.find((k) => k.value === currentPage.keySignature)?.label || currentPage.keySignature}
           </div>
 
           <div
-            className="absolute z-20 text-gray-800 font-semibold text-sm"
+            className="absolute z-20 text-gray-800 font-semibold text-sm cursor-grab"
             style={{
-              left: `${TEMPO_POS.x}px`,
-              top: `${TEMPO_POS.y}px`,
+              left: `${tempoPos.x}px`,
+              top: `${tempoPos.y}px`,
             }}
+            onMouseDown={(e) => handleScoreInfoMouseDown(e, "tempo")}
           >
             Tempo: {currentPage.tempo} BPM
           </div>
@@ -1176,80 +1264,7 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               />
             )}
 
-            {/* Help text for different modes */}
-            {currentPage.notes.length === 0 && activeTool === "none" && !isTextMode && !selectedArticulation && (
-              <div className="absolute inset-0 flex items-center justify-center z-20">
-                <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
-                  <Music className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-                  <p className="text-xl font-semibold mb-2">
-                    {keyboardEnabled
-                      ? "Press keyboard keys to place notations"
-                      : midiEnabled
-                        ? "Press keys on your MIDI device to place notations"
-                        : "Click on the sheet to place notations"}
-                  </p>
-                  <p className="text-sm">
-                    {keyboardEnabled
-                      ? "Keyboard mode is active - press any letter key (a-z, A-S) or Enter for new line"
-                      : midiEnabled
-                        ? "MIDI mode is active - connect a MIDI device and play!"
-                        : selectedNotation
-                          ? `Selected: ${selectedNotation.name} (${selectedNotation.alphabet})`
-                          : "Select a notation from the palette first"}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Text mode help */}
-            {isTextMode && (
-              <div className="absolute inset-0 flex items-center justify-center z-20">
-                <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
-                  <Type className="w-12 h-12 text-blue-500 mx-auto mb-4" />
-                  <p className="text-xl font-semibold mb-2">Text Mode Active</p>
-                  <p className="text-sm">Click anywhere on the scoresheet to add text with formatting options</p>
-                  <div>• Drag placed text anywhere; click × to delete</div>
-                </div>
-              </div>
-            )}
-
-            {/* Articulation mode help */}
-            {selectedArticulation && (
-              <div className="absolute inset-0 flex items-center justify-center z-20">
-                <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
-                  <span className="text-4xl mx-auto mb-4 block">♪</span>
-                  <p className="text-xl font-semibold mb-2">Articulation Mode Active</p>
-                  <p className="text-sm">Click anywhere to place the selected articulation: {selectedArticulation}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Drawing mode help */}
-            {activeTool === "pen" && (
-              <div className="absolute inset-0 flex items-center justify-center z-20">
-                <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
-                  <Pen className="w-12 h-12 text-blue-500 mx-auto mb-4" />
-                  <p className="text-xl font-semibold mb-2">Draw on the sheet with your mouse</p>
-                  <p className="text-sm">
-                    Click and drag to draw freehand lines. Click the Pen button again to exit drawing mode.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Eraser mode help */}
-            {activeTool === "eraser" && (
-              <div className="absolute inset-0 flex items-center justify-center z-20">
-                <div className="text-center text-gray-500 bg-white/80 backdrop-blur-sm rounded-2xl p-8 border border-gray-200 shadow-lg">
-                  <Eraser className="w-12 h-12 text-red-500 mx-auto mb-4" />
-                  <p className="text-xl font-semibold mb-2">Erase drawings on the sheet</p>
-                  <p className="text-sm">
-                    Click and drag to erase parts of your drawings. It also deletes articulations on contact. Click the
-                    Eraser button again to exit erasing mode.
-                  </p>
-                </div>
-              </div>
-            )}
+            
           </div>
         </div>
 
