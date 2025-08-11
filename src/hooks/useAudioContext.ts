@@ -16,7 +16,7 @@ export const useAudioContext = () => {
     try {
       const audioContext = getAudioContext()
       
-      // Resume context if suspended (for better browser compatibility)
+      // Resume context if suspended for better browser compatibility
       if (audioContext.state === 'suspended') {
         audioContext.resume()
       }
@@ -28,18 +28,18 @@ export const useAudioContext = () => {
       gainNode.connect(audioContext.destination)
 
       oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime)
-      oscillator.type = "triangle" // Better sound quality for musical notes
+      oscillator.type = "triangle" // Enhanced sound quality for musical notes
 
-      // Improved envelope for more natural sound
+      // Optimized envelope for natural, responsive sound
       gainNode.gain.setValueAtTime(0, audioContext.currentTime)
-      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01) // Quick attack
-      gainNode.gain.exponentialRampToValueAtTime(0.1, audioContext.currentTime + 0.1) // Decay
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.8) // Release
+      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.005) // Faster attack
+      gainNode.gain.exponentialRampToValueAtTime(0.15, audioContext.currentTime + 0.05) // Quick decay
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.6) // Shorter release
 
       oscillator.start(audioContext.currentTime)
-      oscillator.stop(audioContext.currentTime + 0.8)
+      oscillator.stop(audioContext.currentTime + 0.6)
     } catch (error) {
-      console.warn("Audio playback not supported:", error)
+      console.warn("Audio playback error:", error)
     }
   }, [getAudioContext])
 

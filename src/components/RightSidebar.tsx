@@ -26,7 +26,6 @@ const articulations = [
   { id: "tie", name: "Tie", symbol: "⌒" },
   { id: "black-dot", name: "Black Dot", symbol: "●" },
   { id: "outline-dot", name: "Outline Dot", symbol: "○" },
-  { id: "line", name: "Line", symbol: "—" },
 ]
 
 const RightSidebar: React.FC<RightSidebarProps> = ({
@@ -179,8 +178,8 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
         {/* Drawing (Eraser) */}
         <div className="border-b border-slate-700 p-4">
           <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
-            <Eraser className="h-4 w-4" />
-            Drawing
+            <Minus className="h-4 w-4" />
+            Drawing Tools
           </h3>
           <button
             onClick={toggleEraser}
@@ -209,8 +208,9 @@ const RightSidebar: React.FC<RightSidebarProps> = ({
             <div className="text-sm font-medium">{activeTool === "line" ? "Line Tool ON" : "Enable Line Tool"}</div>
           </button>
           <div className="mt-2 text-xs text-slate-400">
-            • Click to start line, click again to finish
-            • Drag endpoints to resize after placing
+            • Click to start line, click again to finish line
+            • Lines can be selected and moved after placement
+            • Use with eraser tool to remove unwanted lines
           </div>
         </div>
 

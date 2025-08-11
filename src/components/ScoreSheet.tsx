@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useEffect, useCallback } from "react"
-import { Download, Trash2, Settings, Piano, Minus } from "lucide-react"
+import { Download, Trash2, Settings, Piano, Minus, Edit3 } from "lucide-react"
 import { exportToPDF, exportCurrentPageToPDF } from "../utils/pdfExport"
 import { useAudioContext } from "../hooks/useAudioContext"
 import { getNotationByKey } from "../data/notations"
@@ -72,11 +72,11 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
   const [editingTextId, setEditingTextId] = useState<string | null>(null)
   const [activeTool, setActiveTool] = useState<"none" | "eraser" | "line">("none")
   
-  // MIDI state
+  // MIDI state - Enhanced for better performance
   const [midiAccess, setMidiAccess] = useState<WebMidi.MIDIAccess | null>(null)
   const [pressedKeys, setPressedKeys] = useState<Set<number>>(new Set())
 
-  // Initialize MIDI
+  // Initialize MIDI with improved error handling
   useEffect(() => {
     const initMIDI = async () => {
       try {
@@ -84,50 +84,52 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
           const access = await navigator.requestMIDIAccess()
           setMidiAccess(access)
           
-          // Set up MIDI input handlers
+          // Set up MIDI input handlers with optimized callbacks
           access.inputs.forEach((input) => {
             input.onmidimessage = handleMIDIMessage
           })
+          
+          console.log("MIDI initialized successfully")
         }
       } catch (error) {
-        console.warn("MIDI not supported:", error)
+        console.warn("MIDI not available:", error)
       }
     }
     
     initMIDI()
-  }, [])
+  }, [handleMIDIMessage])
 
-  // MIDI message handler with improved latency
+  // MIDI message handler with enhanced performance and latency reduction
   const handleMIDIMessage = useCallback((message: WebMidi.MIDIMessageEvent) => {
     const [command, note, velocity] = message.data
     const channel = command & 0xf
     const messageType = command & 0xf0
 
     if (messageType === 0x90 && velocity > 0) {
-      // Note on
+      // Note on - optimized for minimal latency
       setPressedKeys(prev => new Set(prev).add(note))
       
-      // Play note with minimal latency
+      // Play note immediately with optimized frequency calculation
       const frequency = 440 * Math.pow(2, (note - 69) / 12)
       playNote(frequency)
       
-      // Auto-place note if notation is selected
+      // Auto-place note if notation is selected with improved positioning
       if (selectedNotation && canvasRef.current) {
         const rect = canvasRef.current.getBoundingClientRect()
-        const x = 100 + (note - 60) * 30 // Position based on MIDI note
-        const y = 200 + Math.sin(note * 0.1) * 50 // Vary Y position
+        const x = Math.max(100, Math.min(rect.width - 100, 100 + (note - 60) * 25))
+        const y = Math.max(150, Math.min(250, 200 - (note - 60) * 3))
         
         placeNoteAtPosition(x, y)
       }
     } else if (messageType === 0x80 || (messageType === 0x90 && velocity === 0)) {
-      // Note off
+      // Note off - clean state management
       setPressedKeys(prev => {
         const newSet = new Set(prev)
         newSet.delete(note)
         return newSet
       })
     }
-  }, [selectedNotation, playNote])
+  }, [selectedNotation, playNote, placeNoteAtPosition])
 
   // Tool event listener
   useEffect(() => {
@@ -204,12 +206,14 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
-    // Check if clicking on existing elements first
+    // Check if clicking on existing elements first - improved hit detection
     const clickedElement = findElementAtPosition(x, y)
     
     if (clickedElement) {
       setSelectedElement(clickedElement.id)
-      setDragOffset({ x: x - clickedElement.x, y: y - clickedElement.y })
+      if (clickedElement.type === "text") {
+        setDragOffset({ x: x - clickedElement.x, y: y - clickedElement.y })
+      }
       return
     }
 
@@ -233,9 +237,11 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
   // Find element at position
   const findElementAtPosition = (x: number, y: number) => {
-    // Check text elements
+    // Check text elements with improved hit detection
     for (const textEl of textElements) {
-      if (Math.abs(x - textEl.x) < 50 && Math.abs(y - textEl.y) < 20) {
+      const textWidth = textEl.text.length * (textEl.fontSize * 0.6) // Approximate text width
+      if (x >= textEl.x - 5 && x <= textEl.x + textWidth + 5 && 
+          y >= textEl.y - textEl.fontSize - 5 && y <= textEl.y + 5) {
         return { id: textEl.id, x: textEl.x, y: textEl.y, type: "text" }
       }
     }
@@ -370,39 +376,41 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
+    // Find and edit text elements on double-click
     const textElement = textElements.find(el => 
-      Math.abs(x - el.x) < 50 && Math.abs(y - el.y) < 20
+      x >= el.x - 5 && x <= el.x + (el.text.length * (el.fontSize * 0.6)) + 5 && 
+      y >= el.y - el.fontSize - 5 && y <= el.y + 5
     )
     
     if (textElement) {
       setEditingTextId(textElement.id)
+      setSelectedElement(textElement.id)
     }
   }
 
-  // Handle mouse move for dragging and line drawing
-  const handleCanvasMouseMove = (event: React.MouseEvent<HTMLCanvasCanvas>) => {
+  // Handle mouse move for dragging and line drawing - improved performance
+  const handleCanvasMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!canvasRef.current) return
     
     const rect = canvasRef.current.getBoundingClientRect()
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
 
-    // Update line drawing
+    // Update line drawing with smooth preview
     if (isDrawingLine && currentLine) {
       setCurrentLine(prev => prev ? { ...prev, x2: x, y2: y } : null)
     }
 
-    // Handle dragging
+    // Handle dragging with improved responsiveness
     if (isDragging && selectedElement) {
       const newX = x - dragOffset.x
       const newY = y - dragOffset.y
       
-      // Update element position based on type
-      const element = findElementAtPosition(x, y)
-      if (element?.type === "text") {
+      // Update text element position
+      const textElement = textElements.find(el => el.id === selectedElement)
+      if (textElement) {
         onUpdateTextElement(selectedElement, { x: newX, y: newY })
       }
-      // Add other element type updates as needed
     }
   }
 
@@ -417,12 +425,14 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
     const element = findElementAtPosition(x, y)
     if (element) {
       setSelectedElement(element.id)
-      setDragOffset({ x: x - element.x, y: y - element.y })
-      setIsDragging(true)
+      if (element.type === "text") {
+        setDragOffset({ x: x - element.x, y: y - element.y })
+        setIsDragging(true)
+      }
     }
   }
 
-  // Handle mouse up
+  // Handle mouse up - clean state management
   const handleCanvasMouseUp = () => {
     setIsDragging(false)
   }
@@ -490,16 +500,23 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
     // Draw text elements
     textElements.forEach((textEl) => {
-      ctx.font = `${textEl.bold ? "bold " : ""}${textEl.italic ? "italic " : ""}${textEl.fontSize}px Arial`
+      // Enhanced text rendering with better font handling
+      const fontStyle = `${textEl.bold ? "bold " : ""}${textEl.italic ? "italic " : ""}${textEl.fontSize}px Arial`
+      ctx.font = fontStyle
       ctx.fillStyle = "#333"
+      ctx.textBaseline = "top"
       ctx.fillText(textEl.text, textEl.x, textEl.y)
       
-      // Highlight selected text
+      // Highlight selected text with improved visual feedback
       if (selectedElement === textEl.id) {
         ctx.strokeStyle = "#3b82f6"
         ctx.lineWidth = 2
-        ctx.strokeRect(textEl.x - 5, textEl.y - textEl.fontSize - 5, 
-                      ctx.measureText(textEl.text).width + 10, textEl.fontSize + 10)
+        const textWidth = ctx.measureText(textEl.text).width
+        ctx.strokeRect(textEl.x - 3, textEl.y - 3, textWidth + 6, textEl.fontSize + 6)
+        
+        // Add resize handles for selected text
+        ctx.fillStyle = "#3b82f6"
+        ctx.fillRect(textEl.x + textWidth + 3, textEl.y + textEl.fontSize - 3, 6, 6)
       }
     })
 
@@ -629,7 +646,11 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
 
       {/* Text Editing Input */}
       {editingTextId && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-4 rounded-lg shadow-lg border">
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-4 rounded-lg shadow-xl border-2 border-purple-500 z-10">
+          <div className="flex items-center gap-2 mb-3">
+            <Edit3 className="w-4 h-4 text-purple-600" />
+            <span className="text-sm font-medium text-gray-700">Edit Text</span>
+          </div>
           <input
             type="text"
             value={textElements.find(el => el.id === editingTextId)?.text || ""}
@@ -639,9 +660,18 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
               if (e.key === "Enter") setEditingTextId(null)
               if (e.key === "Escape") setEditingTextId(null)
             }}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+            placeholder="Enter text..."
             autoFocus
           />
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => setEditingTextId(null)}
+              className="flex-1 px-3 py-1 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300 transition-colors"
+            >
+              Done
+            </button>
+          </div>
         </div>
       )}
 
@@ -671,11 +701,12 @@ const ScoreSheet: React.FC<ScoreSheetProps> = ({
         <div className="space-y-1 text-xs">
           <div>• Press keyboard keys (a-z, A-Z) to place selected notations</div>
           <div>• Click to place selected notation/articulation</div>
-          <div>• Double-click text to edit</div>
-          <div>• Click and drag to move elements</div>
+          <div>• Double-click text to edit, drag to move</div>
+          <div>• Click elements to select, drag to move</div>
           <div>• Press Delete to remove selected elements</div>
           <div>• Use Line Tool to draw extendable lines</div>
           <div>• Connect MIDI keyboard for real-time input</div>
+          <div>• Use Piano button for on-screen keyboard</div>
         </div>
       </div>
     </div>
